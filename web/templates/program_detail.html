@@ -145,6 +145,17 @@
           所以全校共用的表只需在一处上传。
         </p>
 
+        <label class="flex mt12" style="gap:9px;cursor:pointer;align-items:center">
+          <input type="checkbox" id="aiToggle" style="width:18px;height:18px">
+          <div>
+            <b>AI 智能识别（推荐）</b>
+            <div class="mut small">
+              开启后，上传的文件交给大模型读取、自动判断是「竞赛表」还是「成绩表」，
+              并标准化成系统能直接核对的标准格式，列名不规范也能更稳地读出来。
+            </div>
+          </div>
+        </label>
+
         {% for kind, title, accept in [
             ('competition', 'A 类竞赛申报汇总表', '.xls,.xlsx,.csv'),
             ('ranking', '学生成绩排名表', '.xls,.xlsx,.csv'),
@@ -164,6 +175,7 @@
               <tr>
                 <td>
                   <div class="small">{{ r.name }}</div>
+                  {% if r.note %}<div class="mut small" style="color:var(--accent)">{{ r.note }}</div>{% endif %}
                   <div class="mut small">{{ (r.size/1024)|round(0)|int }} KB · {{ r.created_at | dt }}</div>
                 </td>
                 <td class="tar" style="width:70px">
@@ -392,10 +404,35 @@ function clearTemplate() {
 }
 function upRef(kind, files) {
   if (!files || !files.length) return;
-  wbUpload('/api/programs/' + PID + '/refdata/' + kind, files).then(function (j) {
+  var ai = document.getElementById('aiToggle').checked;
+  upRefWithAi('/api/programs/' + PID + '/refdata/' + kind, files, ai).then(function (j) {
     if (!j.ok) { wbToast(j.error, 'bad'); return; }
-    wbToast('已上传 ' + j.saved.length + ' 个文件', 'ok');
-    setTimeout(function () { location.reload(); }, 600);
+    if (j.ai && j.classified) {
+      wbToast('AI 已识别 ' + j.n + ' 个文件：' + j.classified.join('、'), 'ok', 6000);
+    } else {
+      wbToast('已上传 ' + j.saved.length + ' 个文件', 'ok');
+    }
+    setTimeout(function () { location.reload(); }, 900);
+  });
+}
+function upRefWithAi(url, files, ai, onProgress) {
+  return new Promise(function (resolve) {
+    var fd = new FormData();
+    for (var i = 0; i < files.length; i++) fd.append('files', files[i]);
+    if (ai) fd.append('ai', '1');
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('X-CSRF-Token', wbCsrf());
+    xhr.upload.onprogress = function (e) {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = function () {
+      var j;
+      try { j = JSON.parse(xhr.responseText); } catch (e) { j = { ok: false, error: 'HTTP ' + xhr.status }; }
+      resolve(j);
+    };
+    xhr.onerror = function () { resolve({ ok: false, error: '网络错误' }); };
+    xhr.send(fd);
   });
 }
 function delRef(id, name) {

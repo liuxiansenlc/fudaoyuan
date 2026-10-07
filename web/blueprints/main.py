@@ -234,6 +234,16 @@ def run_batch(bid):
     only = data.get('file_id')
     kind = data.get('kind') or 'full'          # full | analyze_only
 
+    # ★ 空批次不该能运行：没有学生材料，跑了也是空转（还会卡在"运行中"）
+    if only:
+        n_files = db.q('SELECT COUNT(*) c FROM files WHERE id=?', (only,), one=True)['c']
+        if not n_files:
+            return jsonify(ok=False, error='没有可运行的材料（文件不存在）'), 400
+    else:
+        n_files = db.q('SELECT COUNT(*) c FROM files WHERE batch_id=?', (bid,), one=True)['c']
+        if not n_files:
+            return jsonify(ok=False, error='这个批次还没有上传任何学生材料，请先上传再运行'), 400
+
     running = db.q_dict("SELECT * FROM tasks WHERE batch_id=? AND status IN ('queued','running')",
                         (bid,), one=True)
     if running:

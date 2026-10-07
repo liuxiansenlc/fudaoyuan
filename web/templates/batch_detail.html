@@ -6,7 +6,7 @@
 {% endblock %}
 
 {% block tools %}
-<button class="btn pri sm" id="runBtn" onclick="runBatch()">运行整个批次</button>
+{# 运行按钮已移到页面主体「② 运行出结论」卡片里，这里不再重复 #}
 {% endblock %}
 
 {% block body %}
@@ -41,41 +41,7 @@
 
 <div class="card">
   <div class="card-h">
-    <h2>运行</h2><div class="sp"></div>
-    <span class="mut small" id="runHint">读图会自动跳过已缓存的图片</span>
-  </div>
-  <div class="card-b">
-    <div id="taskPanel" class="hide">
-      <div class="taskbar mb12">
-        <span class="chip c-blue" id="tkKind">任务</span>
-        <span class="ph" id="tkPhase">准备中…</span>
-        <div class="sp"></div>
-        <span class="pc" id="tkCount"></span>
-      </div>
-      <div class="prog" id="tkBar"><i></i></div>
-      <div class="small mut2 mt6" id="tkMsg"></div>
-    </div>
-    <div id="runIdle">
-      <div class="flex wrap">
-        <button class="btn pri" onclick="runBatch('full')">读图 + 出结论</button>
-        <button class="btn" onclick="runBatch('analyze_only')">只出结论（跳过读图）</button>
-        <span class="mut small">只出结论用于：已读过图、只想重新配对（例如刚改了规则）</span>
-      </div>
-      <div class="flex wrap mt12" style="gap:8px;border-top:1px solid var(--line2);padding-top:12px">
-        <button class="btn" onclick="doExport()">导出标准化 Word 包</button>
-        <span class="mut small">
-          把 {{ st.analyzed }} 份已出结论的材料重排成「板块 → 奖项名 → 紧跟证明图」，
-          打包成一个 zip。待确认与缺图会列在文末清单里，不混进正文。
-        </span>
-      </div>
-      <div id="expDone" class="mt12"></div>
-    </div>
-  </div>
-</div>
-
-<div class="card">
-  <div class="card-h">
-    <h2>上传材料</h2><div class="sp"></div>
+    <h2>① 上传材料</h2><div class="sp"></div>
     <span class="mut small">支持多选，可整批拖入</span>
   </div>
   <div class="card-b">
@@ -102,11 +68,46 @@
   </div>
 </div>
 
+<div class="card">
+  <div class="card-h">
+    <h2>② 运行出结论</h2><div class="sp"></div>
+    <span class="mut small" id="runHint">读图会自动跳过已缓存的图片</span>
+  </div>
+  <div class="card-b">
+    <div id="taskPanel" class="hide">
+      <div class="taskbar mb12">
+        <span class="chip c-blue" id="tkKind">任务</span>
+        <span class="ph" id="tkPhase">准备中…</span>
+        <div class="sp"></div>
+        <span class="pc" id="tkCount"></span>
+      </div>
+      <div class="prog" id="tkBar"><i></i></div>
+      <div class="small mut2 mt6" id="tkMsg"></div>
+    </div>
+    <div id="runIdle">
+      <div class="flex wrap">
+        <button class="btn pri" onclick="runBatch('full')" id="btnFull">读图 + 出结论</button>
+        <button class="btn" onclick="runBatch('analyze_only')" id="btnAnalyze">只出结论（跳过读图）</button>
+        <span class="mut small">只出结论用于：已读过图、只想重新配对（例如刚改了规则）</span>
+      </div>
+      <div class="flex wrap mt12" style="gap:8px;border-top:1px solid var(--line2);padding-top:12px">
+        <button class="btn" onclick="doExport()" id="btnExport">导出标准化 Word 包</button>
+        <span class="mut small">
+          把 {{ st.analyzed }} 份已出结论的材料重排成「板块 → 奖项名 → 紧跟证明图」，
+          打包成一个 zip。待确认与缺图会列在文末清单里，不混进正文。
+        </span>
+      </div>
+      <div id="expDone" class="mt12"></div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block js %}
 <script>
 var BID = {{ b.id }};
+var FILE_COUNT = {{ files|length }};
 var stopPoll = null;
 
 document.addEventListener('DOMContentLoaded', function () {
@@ -123,8 +124,22 @@ document.addEventListener('DOMContentLoaded', function () {
   drop.addEventListener('drop', function (ev) {
     if (ev.dataTransfer.files.length) doUpload(ev.dataTransfer.files);
   });
+  // 空批次：运行按钮禁用 + 提示先上传
+  updateRunState();
   resumeTasks();
 });
+
+function updateRunState() {
+  var full = document.getElementById('btnFull');
+  var analyze = document.getElementById('btnAnalyze');
+  if (!full) return;
+  if (FILE_COUNT === 0) {
+    full.disabled = true;
+    analyze.disabled = true;
+    document.getElementById('runHint').innerHTML =
+      '<span class="c-bad">这个批次还没有上传学生材料，请先在上方上传，才能运行</span>';
+  }
+}
 
 function doUpload(files) {
   var bar = document.getElementById('upBar');
@@ -163,6 +178,10 @@ function doUpload(files) {
 
 function runBatch(kind) {
   kind = kind || 'full';
+  if (FILE_COUNT === 0) {
+    wbToast('请先上传学生材料再运行', 'warn');
+    return;
+  }
   wbApi('/api/batches/' + BID + '/run', { method: 'POST', body: { kind: kind } })
     .then(function (j) {
       if (!j.ok) { wbToast(j.error || '启动失败', kind === 'full' ? 'bad' : 'warn'); return; }

@@ -114,7 +114,46 @@ def api_refdata_upload(kind):
     fs = request.files.getlist('files')
     if not fs:
         return jsonify(ok=False, error='没有收到文件'), 400
-    saved = []
+    use_ai = request.form.get('ai') in ('1', 'true', 'on', 'yes')
+    saved, classified = [], []
+    if use_ai:
+        from ..services import refdata_ai as RAI
+        model_row = VC.active_model()
+        for f in fs:
+            original = safe_name(f.filename)
+            ext = os.path.splitext(original)[1].lower()
+            if ext not in WebConfig.ALLOW_REF:
+                return jsonify(ok=False, error='AI 识别只接受 .xls/.xlsx/.csv：%s' % original), 400
+            dest_dir = os.path.join(WebConfig.UPLOAD_DIR, 'refdata', kind)
+            os.makedirs(dest_dir, exist_ok=True)
+            tmp = os.path.join(dest_dir, '_ai_raw_' + original)
+            f.save(tmp)
+            base_name = 'ai_' + os.path.splitext(original)[0] + '.xlsx'
+            try:
+                out_kind, stored, n, note = RAI.recognize_and_store(
+                    tmp, kind, model_row, dest_dir, base_name)
+            except Exception as e:
+                try:
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+                except Exception:
+                    pass
+                return jsonify(ok=False, error='AI 识别失败：%s（%s）' % (original, e)), 400
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except Exception:
+                pass
+            db.ex('INSERT INTO refdata(kind,name,stored_path,size,note,uploaded_by,created_at)'
+                  ' VALUES(?,?,?,?,?,?,?)',
+                  (out_kind, original, stored, os.path.getsize(stored), note,
+                   u['id'], db.utcnow()))
+            saved.append(original)
+            classified.append('%s→%s(%d条)' % (original, out_kind, n))
+        db.audit(u['id'], 'refdata.ai_upload', kind,
+                 '；'.join(classified) if classified else ','.join(saved))
+        return jsonify(ok=True, saved=saved, ai=True,
+                       classified=classified, n=len(saved))
     for f in fs:
         original = safe_name(f.filename)
         ext = os.path.splitext(original)[1].lower()

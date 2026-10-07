@@ -49,9 +49,15 @@ def load_ranking(root=None, verbose=False, cfg=None):
     root = root or RANKING_ROOT or (cfg or DEFAULT).ranking_root
     """
     返回 {'by_sid': {学号: rec}, 'by_name': {(班级,姓名): rec}, 'files': n}
+    root 可以是目录（递归找 *.xlsx），也可以是单个 xlsx 文件路径。
+    Web 上传的成绩表存的是单文件路径，这里要兼容两种情况，否则
+    传单个文件时 glob 找不到（踩过：上传后"成绩表 0 条学号"）。
     """
     import openpyxl
-    files = glob.glob(os.path.join(root, '**', '*.xlsx'), recursive=True)
+    if root and os.path.isfile(root):
+        files = [root]
+    else:
+        files = glob.glob(os.path.join(root or '', '**', '*.xlsx'), recursive=True)
     by_sid = {}
     by_name = {}
     dup_sid = []
@@ -112,12 +118,28 @@ def load_competitions(path=None, cfg=None):
     """
     返回 {'items': [{name, name_clean, level, category, raw}], 'names': [...]}
     level: 国家级/省级；category: A+/A/A-
+
+    同时支持 .xls（xlrd）与 .xlsx/.xlsm（openpyxl）。之前只用 xlrd，
+    上传 .xlsx 竞赛表会直接报「Excel xlsx file; not supported」——
+    辅导员传的表不一定是 .xls，这里按扩展名分派，读法更稳。
     """
-    import xlrd
-    book = xlrd.open_workbook(path)
+    ext = os.path.splitext(path or '')[1].lower()
+    sheets = []            # [(sheet_name, [[cell,...] per row])]
+    if ext in ('.xlsx', '.xlsm'):
+        import openpyxl
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        for ws in wb.worksheets:
+            sheets.append((ws.title, [list(r) for r in ws.iter_rows(values_only=True)]))
+        wb.close()
+    else:
+        import xlrd
+        book = xlrd.open_workbook(path)
+        for sh in book.sheets():
+            sheets.append((sh.name, [sh.row_values(i) for i in range(sh.nrows)]))
+
     items = []
-    for sh in book.sheets():
-        rows = [[_norm(c) for c in sh.row_values(i)] for i in range(sh.nrows)]
+    for sheet_name, raw_rows in sheets:
+        rows = [[_norm(c) for c in r] for r in raw_rows]
         if not rows:
             continue
         hdr_i = None
@@ -142,7 +164,7 @@ def load_competitions(path=None, cfg=None):
                 'name_clean': _clean_comp_name(nm),
                 'level': (r[c_level] if c_level is not None and c_level < len(r) else ''),
                 'category': (r[c_cat] if c_cat is not None and c_cat < len(r) else ''),
-                'sheet': sh.name,
+                'sheet': sheet_name,
             })
     # 去重
     seen = set()

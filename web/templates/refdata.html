@@ -9,6 +9,22 @@
   没有它们系统仍能跑，但配对与资格核验会打折扣。
 </div>
 
+<div class="card mb12" style="align-self:start">
+  <div class="card-b">
+    <label class="flex" style="gap:9px;cursor:pointer;align-items:center">
+      <input type="checkbox" id="aiToggle" style="width:18px;height:18px">
+      <div>
+        <b>AI 智能识别（推荐）</b>
+        <div class="mut small">
+          开启后，上传的文件先交给大模型读取、<b>自动判断是「竞赛表」还是「成绩表」</b>，
+          并标准化成系统能直接核对的标准格式。列名不规范、表头不在第一行、多级表头
+          也能更稳地读出来。
+        </div>
+      </div>
+    </label>
+  </div>
+</div>
+
 <div class="grid g4 mb12">
   <div class="stat accent"><div class="k">A 类竞赛条目</div>
     <div class="v">{{ meta.competition_n }}</div>
@@ -42,6 +58,7 @@
             <tr>
               <td>
                 <div class="small">{{ r.name }}</div>
+                {% if r.note %}<div class="mut small" style="color:var(--accent)">{{ r.note }}</div>{% endif %}
                 <div class="mut small">{{ r.created_at | dt }}</div>
               </td>
               <td class="num mut small">{{ (r.size / 1024) | round(0) | int }} KB</td>
@@ -97,13 +114,39 @@ function up(kind, files) {
   var p = document.getElementById('p-' + kind);
   p.classList.remove('hide');
   p.querySelector('i').style.width = '0%';
-  wbUpload('/api/refdata/' + kind, files, function (x) {
+  var ai = document.getElementById('aiToggle').checked;
+  upWithAi('/api/refdata/' + kind, files, ai, function (x) {
     p.querySelector('i').style.width = (x * 100).toFixed(0) + '%';
   }).then(function (j) {
     if (!j.ok) { wbToast(j.error || '上传失败', 'bad'); p.classList.add('hide'); return; }
     p.querySelector('i').style.width = '100%';
-    wbToast('已上传 ' + j.saved.length + ' 个文件', 'ok');
-    setTimeout(function () { location.reload(); }, 700);
+    if (j.ai && j.classified) {
+      wbToast('AI 已识别 ' + j.n + ' 个文件：' + j.classified.join('、'), 'ok', 6000);
+    } else {
+      wbToast('已上传 ' + j.saved.length + ' 个文件', 'ok');
+    }
+    setTimeout(function () { location.reload(); }, 900);
+  });
+}
+
+function upWithAi(url, files, ai, onProgress) {
+  return new Promise(function (resolve) {
+    var fd = new FormData();
+    for (var i = 0; i < files.length; i++) fd.append('files', files[i]);
+    if (ai) fd.append('ai', '1');
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('X-CSRF-Token', wbCsrf());
+    xhr.upload.onprogress = function (e) {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = function () {
+      var j;
+      try { j = JSON.parse(xhr.responseText); } catch (e) { j = { ok: false, error: 'HTTP ' + xhr.status }; }
+      resolve(j);
+    };
+    xhr.onerror = function () { resolve({ ok: false, error: '网络错误' }); };
+    xhr.send(fd);
   });
 }
 
