@@ -48,6 +48,10 @@ info "安装系统依赖..."
 apt-get update -y -qq
 apt-get install -y -qq python3 python3-venv python3-pip python3-dev build-essential nginx 2>/dev/null \
   || apt-get install -y python3 python3-venv python3-pip python3-dev build-essential nginx
+# libgl1 / libglib2.0-0：OpenCV（RapidOCR 遮挡敏感信息用）在无界面服务器上的必需系统库。
+# 缺了会报「ImportError: libGL.so.1: cannot open shared object file」。
+apt-get install -y -qq libgl1 libglib2.0-0 2>/dev/null \
+  || apt-get install -y libgl1 libglib2.0-0 || true
 
 # ---------------------- 2. 目录准备 ----------------------
 info "准备数据目录..."

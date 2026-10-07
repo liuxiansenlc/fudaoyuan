@@ -142,6 +142,19 @@ with app.app_context():
         else:
             db.set_setting(PV.SETTING_KEY, old)
 
+# ---------------- 6. libGL 报错要翻成人话 ----------------
+print('\n6) 系统库缺失（libGL）友好化')
+ok_avail, msg_avail = PV.available()
+check('available() 返回 (bool, str)', isinstance(ok_avail, bool) and isinstance(msg_avail, str),
+      str((ok_avail, msg_avail)))
+libgl = PV._friendly_import_error(
+    ImportError('libGL.so.1: cannot open shared object file: No such file or directory'))
+check('libGL 报错带出 apt 修复命令', 'apt-get install -y libgl1' in libgl, libgl[:80])
+check('libGL 报错带出 headless 备选', 'opencv-python-headless' in libgl)
+other = PV._friendly_import_error(ImportError('no module named xyz'))
+check('其它 ImportError 原样透传', 'xyz' in other and 'apt-get' not in other, other[:60])
+check('MaskUnavailable 异常类型存在', issubclass(PV.MaskUnavailable, RuntimeError))
+
 print('\n' + '=' * 80)
 print('通过 %d 项，失败 %d 项' % (len(PASS), len(FAIL)))
 if FAIL:

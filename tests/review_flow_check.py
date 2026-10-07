@@ -172,17 +172,20 @@ def main():
 
             out1 = os.path.join(HERE, 'data', 'exports', '_rf_remove_%d.docx' % fid)
             EX.build_docx(view_r, out1, reject_mode='remove')
-            t1 = '\n'.join(p.text for p in _p(out1))
-            # 用「去掉序号后的完整条目文本」作唯一标识，避免同名奖项（不同届）
-            # 前缀撞车导致误判。clean 逻辑与导出侧一致：剥掉开头的序号。
             import re as _re
-            frag = _re.sub(r'^\s*\d{1,2}\s*[\.、）)]\s*', '', row_r['item_text'] or '').strip()
+            # 归一：导出侧 _clean_text 会清掉条目自带的序号（含"（二）省级"这种
+            # 学生手写的小节标记）并把换行收成空格。比对必须用**同一个清洗函数**，
+            # 否则多行 / 带小节标记的条目会误报（曾经偶发失败的原因）。
+            def _norm(s):
+                return _re.sub(r'\s+', ' ', s or '').strip()
+            t1 = _norm('\n'.join(p.text for p in _p(out1)))
+            frag = EX._clean_text(row_r['item_text'] or '')
             check('remove 模式：否定的条目被剔除', frag not in t1, frag)
 
             out2 = os.path.join(HERE, 'data', 'exports', '_rf_mark_%d.docx' % fid)
             st2 = EX.build_docx(view_r, out2, reject_mode='mark')
-            t2 = '\n'.join(p.text for p in _p(out2))
-            check('mark 模式：否定的条目被保留', frag in t2)
+            t2 = _norm('\n'.join(p.text for p in _p(out2)))
+            check('mark 模式：否定的条目被保留', frag in t2, frag)
             check('mark 模式：带「不符合申报规范」标注', '不符合申报规范' in t2)
             check('mark 统计有 rejected_marked', st2[1].get('rejected_marked', 0) >= 1, st2[1])
 

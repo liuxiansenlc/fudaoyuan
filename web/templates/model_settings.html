@@ -104,6 +104,12 @@
           id="pvState">{{ '已开启' if privacy_on else '已关闭' }}</span>
   </div>
   <div class="card-b">
+    {% if not privacy_ok %}
+    <div class="note bad mb12">
+      <b>遮挡功能当前不可用</b> —— 开启开关也不会真正遮挡，图片会原样送给模型。<br>
+      <span class="mono small">{{ privacy_msg }}</span>
+    </div>
+    {% endif %}
     <div class="flex wrap" style="gap:10px">
       <label class="flex" style="gap:7px;cursor:pointer">
         <input type="checkbox" id="pvToggle" {{ 'checked' if privacy_on }}

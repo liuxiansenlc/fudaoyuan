@@ -39,6 +39,45 @@ PATTERNS = [
 
 SETTING_KEY = 'mask_sensitive'
 
+# 遮挡依赖 OpenCV，而 OpenCV 在**无图形界面的 Linux 服务器**上需要系统库
+# libGL.so.1 / libglib-2.0.so.0。缺了就会：
+#     ImportError: libGL.so.1: cannot open shared object file
+# 这是很常见的部署坑，所以这里把它翻译成"照着敲一行命令"的人话。
+_LAST_ERR = ''
+
+
+class MaskUnavailable(RuntimeError):
+    """遮挡能力不可用（通常是 OpenCV 的系统库缺失）。"""
+
+
+def _friendly_import_error(e):
+    msg = str(e) or ''
+    if 'libGL' in msg or 'libglib' in msg or 'libGL.so' in msg:
+        return (
+            '遮挡功能不可用：本机缺少 OpenCV 需要的系统库（%s）。\n'
+            '在服务器上执行下面这行即可修复（Ubuntu/Debian）：\n'
+            '    apt-get update && apt-get install -y libgl1 libglib2.0-0\n'
+            '或者改用无界面版 OpenCV：pip install opencv-python-headless'
+            % msg
+        )
+    return '遮挡功能不可用：%s' % msg
+
+
+def available():
+    """
+    遮挡能力是否就绪（OpenCV 能否导入）。返回 (ok, message)。
+    给设置页/系统页显示用，避免"开了遮挡其实没生效"这种静默风险。
+    """
+    try:
+        import cv2  # noqa: F401
+        return True, ''
+    except Exception as e:
+        return False, _friendly_import_error(e)
+
+
+def last_error():
+    return _LAST_ERR
+
 
 def enabled():
     """运行期设置优先（界面上可切换），其次环境变量。"""
@@ -55,8 +94,12 @@ def _engine():
     if _ocr is None:
         with _lock:
             if _ocr is None:
-                from rapidocr_onnxruntime import RapidOCR
-                _ocr = RapidOCR()
+                try:
+                    from rapidocr_onnxruntime import RapidOCR
+                    _ocr = RapidOCR()
+                except ImportError as e:
+                    # 把 libGL 这类系统级 ImportError 翻成人话再抛出
+                    raise MaskUnavailable(_friendly_import_error(e))
     return _ocr
 
 
@@ -84,12 +127,26 @@ def find_sensitive(text):
     return out
 
 
+_warned = False
+
+
+def _warn_once(msg):
+    """遮挡不可用只提醒一次，避免每张图刷屏。"""
+    global _warned
+    if _warned:
+        return
+    _warned = True
+    import sys
+    sys.stderr.write('[privacy] ' + msg + '\n')
+
+
 def mask_image(data, min_conf=0.5, pad=2):
     """
     对图片做遮挡。返回 (masked_bytes, hits)。
     hits: [{'kind': '身份证号', 'text': '3302**********4417', 'box': [x0,y0,x1,y1]}]
     任何异常都退回原图（绝不能因为遮挡失败就没法读图）。
     """
+    global _LAST_ERR
     hits = []
     try:
         from PIL import Image, ImageDraw
@@ -133,6 +190,12 @@ def mask_image(data, min_conf=0.5, pad=2):
         buf = io.BytesIO()
         im.save(buf, format='JPEG', quality=90)
         return buf.getvalue(), hits
+    except MaskUnavailable as e:
+        # ★ 绝不因为遮挡坏了就不读图 —— 但要留下痕迹：
+        #   否则会出现"界面显示遮挡已开启、其实一张都没遮"的静默隐私风险。
+        _LAST_ERR = str(e)
+        _warn_once(str(e))
+        return data, hits
     except Exception:
         return data, hits
 
@@ -160,6 +223,10 @@ def preview_mask(data):
                 continue
             for kind, raw, masked in find_sensitive(text):
                 hits.append({'kind': kind, 'text': masked, 'n': len(raw)})
+    except MaskUnavailable as e:
+        return {'ok': False, 'error': str(e), 'hits': []}
+    except ImportError as e:
+        return {'ok': False, 'error': _friendly_import_error(e), 'hits': []}
     except Exception as e:
         return {'ok': False, 'error': '%s: %s' % (type(e).__name__, e), 'hits': []}
     return {'ok': True, 'error': '', 'hits': hits}

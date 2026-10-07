@@ -208,8 +208,10 @@ def model_settings():
         except Exception:
             r['extra_obj'] = {}
     left, calls, images = VC.check_quota()
+    pv_ok, pv_msg = PV.available()
     return render_template('model_settings.html', rows=rows, left=left,
-                           calls=calls, images=images, privacy_on=PV.enabled())
+                           calls=calls, images=images, privacy_on=PV.enabled(),
+                           privacy_ok=pv_ok, privacy_msg=pv_msg)
 
 
 @bp.route('/api/settings/model', methods=['POST'])
@@ -348,7 +350,8 @@ def g_nl_save():
 @admin_required
 def api_privacy():
     if request.method == 'GET':
-        return jsonify(ok=True, enabled=PV.enabled(),
+        ok, msg = PV.available()
+        return jsonify(ok=True, enabled=PV.enabled(), available=ok, message=msg,
                        patterns=[p[0] for p in PV.PATTERNS])
     d = request.get_json(silent=True) or {}
     on = bool(d.get('enabled'))

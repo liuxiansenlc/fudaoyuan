@@ -313,6 +313,12 @@ def _h_read_images(task, api):
 
     from . import privacy as PV
     masking = PV.enabled()
+    if masking:
+        _avail, _amsg = PV.available()
+        if not _avail:
+            # 不阻断读图，但必须让用户看到"遮挡其实没生效"，否则是静默的隐私风险
+            bump(task['id'], message='⚠ 遮挡不可用，图片将原样送模型：%s'
+                 % (_amsg.splitlines()[0] if _amsg else '')[:180])
 
     def work(item):
         # 每张图读之前先看是否被暂停/取消 —— 保证「暂停不丢进度」
