@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}审核结论 · {{ app_name }}{% endblock %}
+{% block crumb %}<a href="{{ url_for('main.dashboard') }}">总览</a> / <b>审核结论</b>{% endblock %}
+
+{% block body %}
+{% if groups %}
+  {% for g in groups %}
+  <div class="card">
+    <div class="card-h">
+      <h2>{{ g.batch.name }}</h2>
+      <div class="sp"></div>
+      <span class="mut small">{{ g.files|length }} 位学生已出结论</span>
+      <a class="btn sm ghost" href="{{ url_for('main.batch_detail', bid=g.batch.id) }}">批次详情 →</a>
+    </div>
+    <div class="card-b tight">
+      <table class="tb">
+        <thead><tr><th style="width:110px">学生</th><th>文件</th>
+          <th class="num" style="width:70px">条目</th><th class="num" style="width:70px">图片</th>
+          <th style="width:120px"></th></tr></thead>
+        <tbody>
+        {% for f in g.files %}
+          <tr>
+            <td><b>{{ f.student_name or '—' }}</b></td>
+            <td class="mut small">{{ f.orig_name }}</td>
+            <td class="num">{{ f.n_items }}</td>
+            <td class="num">{{ f.n_images }}</td>
+            <td class="tar"><a class="btn xs pri" href="{{ url_for('review.detail', fid=f.id) }}">审核</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+<div class="card"><div class="card-b">
+  <div class="empty">
+    <div class="ic">✅</div>
+    <div>还没有已出结论的材料</div>
+    <div class="mut small mt6">先去「批次管理」上传材料并运行</div>
+    <a class="btn pri sm mt12" href="{{ url_for('main.batches') }}">去批次管理</a>
+  </div>
+</div></div>
+{% endif %}
+{% endblock %}

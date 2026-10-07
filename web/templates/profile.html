@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}我的账号 · {{ app_name }}{% endblock %}
+{% block crumb %}<a href="{{ url_for('main.dashboard') }}">总览</a> / <b>我的账号</b>{% endblock %}
+
+{% block body %}
+<div class="grid g2">
+  <div class="card" style="align-self:start">
+    <div class="card-h"><h2>账号信息</h2></div>
+    <div class="card-b">
+      <div class="flex" style="justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line2)">
+        <span class="mut2">用户名</span><b class="mono">{{ u.username }}</b>
+      </div>
+      <div class="flex" style="justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line2)">
+        <span class="mut2">显示名</span><b>{{ u.display_name or '—' }}</b>
+      </div>
+      <div class="flex" style="justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line2)">
+        <span class="mut2">角色</span>
+        <b>{% if u.is_admin %}<span class="chip c-acc">系统管理员</span>
+           {% else %}<span class="chip c-muted">审核员</span>{% endif %}</b>
+      </div>
+      <div class="flex" style="justify-content:space-between;padding:9px 0">
+        <span class="mut2">创建时间</span><b class="small">{{ u.created_at | dt }}</b>
+      </div>
+
+      {% if is_default %}
+      <div class="note bad mt12">
+        ⚠️ 你仍在使用系统公开的默认密码。任何知道这个默认值的人都能登录，
+        请立刻在右侧修改。
+      </div>
+      {% else %}
+      <div class="note ok mt12">密码已修改，不再是默认值。</div>
+      {% endif %}
+
+      <div class="mt12">
+        <a class="btn ghost" href="{{ url_for('auth.logout') }}">退出登录</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="align-self:start">
+    <div class="card-h"><h2>修改密码</h2></div>
+    <div class="card-b">
+      <label class="fld"><span>当前密码</span>
+        <input type="password" id="pOld" autocomplete="current-password"></label>
+      <label class="fld"><span>新密码（至少 6 位）</span>
+        <input type="password" id="pNew" autocomplete="new-password"></label>
+      <label class="fld"><span>再输一次新密码</span>
+        <input type="password" id="pNew2" autocomplete="new-password"></label>
+      <button class="btn pri" onclick="changePwd()">修改密码</button>
+
+      <div class="note mt12">
+        密码用 PBKDF2-SHA256 加盐哈希后存储，任何人（包括管理员）都无法反查出原文。
+        忘记密码只能由管理员在「用户管理」里重置。
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+function changePwd() {
+  var o = document.getElementById('pOld').value;
+  var n = document.getElementById('pNew').value;
+  var n2 = document.getElementById('pNew2').value;
+  if (!o) { wbToast('请输入当前密码', 'warn'); return; }
+  if (n.length < 6) { wbToast('新密码至少 6 位', 'warn'); return; }
+  if (n !== n2) { wbToast('两次输入的新密码不一致', 'warn'); return; }
+  wbApi('/api/profile/password', { method: 'POST', body: { old: o, new: n } })
+    .then(function (j) {
+      if (!j.ok) { wbToast(j.error, 'bad'); return; }
+      wbToast('密码已修改', 'ok');
+      setTimeout(function () { location.reload(); }, 700);
+    });
+}
+</script>
+{% endblock %}

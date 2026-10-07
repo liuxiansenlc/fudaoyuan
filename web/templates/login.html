@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}登录 · {{ app_name }}{% endblock %}
+
+{% block anon %}
+<div class="auth">
+  <form class="box" method="post">
+    <input type="hidden" name="_csrf" value="{{ csrf() }}">
+    <div class="logo">奖</div>
+    <h1>奖学金材料审核工作台</h1>
+    <div class="sub">国家奖学金申报支撑材料 · 智能核验</div>
+
+    {% if err %}<div class="alert bad">{{ err }}</div>{% endif %}
+
+    <label class="fld">
+      <span>账号</span>
+      <input type="text" name="username" autocomplete="username" autofocus required>
+    </label>
+    <label class="fld">
+      <span>密码</span>
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+
+    <button class="btn pri" style="width:100%;padding:9px" type="submit">登 录</button>
+    <p class="small mut" style="text-align:center;margin:14px 0 0">
+      账号由管理员创建，不开放自助注册
+    </p>
+  </form>
+</div>
+{% endblock %}

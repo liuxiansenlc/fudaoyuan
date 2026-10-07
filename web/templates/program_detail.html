@@ -1,0 +1,444 @@
+{% extends "base.html" %}
+{% block title %}{{ p.name }} · 奖学金项目{% endblock %}
+{% block crumb %}
+  <a href="{{ url_for('programs.index') }}">奖学金项目</a> / <b>{{ p.name }}</b>
+{% endblock %}
+
+{% block tools %}
+{% if cu.is_admin %}
+<button class="btn sm" onclick="saveBasic()">保存基本信息</button>
+{% endif %}
+{% endblock %}
+
+{% set nl_pid = p.id %}
+{% block body %}
+
+{# ---------- 基本信息 ---------- #}
+<div class="card">
+  <div class="card-b">
+    <div class="flex wrap" style="gap:14px">
+      <div style="flex:1;min-width:260px">
+        <h1 style="margin-bottom:2px">{{ p.name }}</h1>
+        <div class="mut small">
+          <span class="chip c-muted">{{ p.category }}</span>
+          {% if p.quota %}<span class="chip c-acc">名额 {{ p.quota }}</span>{% endif %}
+          {% if p.status != 'active' %}<span class="chip c-warn">已归档</span>{% endif %}
+          {% if not template_exists %}<span class="chip c-muted">使用默认模板导出</span>{% endif %}
+          · 创建于 {{ p.created_at | dt('%Y-%m-%d') }}
+        </div>
+        {% if p.description %}<div class="mut2 small mt6">{{ p.description }}</div>{% endif %}
+      </div>
+      <div class="flex wrap" style="gap:7px;align-items:flex-start">
+        <div style="width:190px">
+          <label class="fld" style="margin:0"><span>名称</span>
+            <input type="text" id="pName" value="{{ p.name }}"></label>
+        </div>
+        <div style="width:118px">
+          <label class="fld" style="margin:0"><span>类别</span>
+            <select id="pCat">
+              {% for c in categories %}
+              <option value="{{ c }}" {{ 'selected' if c == p.category }}>{{ c }}</option>
+              {% endfor %}
+            </select></label>
+        </div>
+        <div style="width:92px">
+          <label class="fld" style="margin:0"><span>名额</span>
+            <input type="number" id="pQuota" value="{{ p.quota or 0 }}" min="0"></label>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ---------- 板块方案 ---------- #}
+<div class="card">
+  <div class="card-h">
+    <h2>板块方案</h2><div class="sp"></div>
+    <select id="presetSel" style="width:190px">
+      {% for n in presets %}<option value="{{ n }}">{{ n }} 预设</option>{% endfor %}
+    </select>
+    <button class="btn sm" onclick="applyPreset()">套用</button>
+  </div>
+  <div class="card-b">
+    <p class="lead">
+      决定这个奖学金<b>看哪些板块、按什么顺序、叫什么名、是否必需</b>。
+      审核页与导出的 Word 都按这个顺序排版。学生材料里出现的板块若不在方案内，
+      仍会展示（放在最后），不会被丢掉。
+    </p>
+    <div id="schemeList"></div>
+    <div class="flex mt12" style="gap:8px">
+      <select id="addKey" style="width:220px"></select>
+      <button class="btn sm" onclick="addSec()">添加板块</button>
+      <div class="sp"></div>
+      <button class="btn pri sm" onclick="saveScheme()">保存板块方案</button>
+    </div>
+  </div>
+</div>
+
+<div class="grid g2">
+  {# ---------- 规则覆盖 ---------- #}
+  <div class="card" style="align-self:start">
+    <div class="card-h">
+      <h2>规则覆盖（只对这个项目生效）</h2><div class="sp"></div>
+      <button class="btn sm ghost" onclick="resetRules()">全部恢复继承</button>
+    </div>
+    <div class="card-b">
+      <p class="lead">
+        留空 = 继承全局设置。填了的项会覆盖全局值，只作用于本项目
+        （例如校级奖学金的体测线可能与国奖不同）。
+      </p>
+      {% for g in groups %}
+      <h3 style="margin-top:14px">{{ g.title }}</h3>
+      {% for it in g['items'] %}
+      <div class="flex" style="align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--line2)">
+        <div style="flex:1;min-width:0">
+          <div class="mono" style="color:var(--tx)">{{ it['name'] }}</div>
+          {% if it['hint'] %}<div class="mut small">{{ it['hint'] }}</div>{% endif %}
+        </div>
+        <div class="mut small nowrap" style="width:96px;text-align:right;padding-top:5px">
+          继承 {{ inherited.get(it['key'], it['value']) }}
+        </div>
+        <div style="width:96px;flex:none">
+          <input type="number" step="any" class="prv" data-key="{{ it['key'] }}"
+                 placeholder="继承"
+                 value="{{ own_rules.get(it['key'], '') }}">
+        </div>
+      </div>
+      {% endfor %}
+      {% endfor %}
+      {% if cu.is_admin %}
+      <button class="btn pri mt12" onclick="saveRules()">保存规则覆盖</button>
+      {% endif %}
+    </div>
+  </div>
+
+  <div>
+    {# ---------- 导出模板 ---------- #}
+    <div class="card" style="align-self:start">
+      <div class="card-h"><h2>导出模板</h2></div>
+      <div class="card-b">
+        <p class="lead">
+          导出标准化 Word 时用哪份模板。不传就用系统默认模板（国奖六板块版式）。
+          传了则沿用该模板的页面尺寸、页边距与字体。
+        </p>
+        {% if template_exists %}
+        <div class="note ok mb12">
+          当前：<span class="mono">{{ p.template_path.split('/')[-1].split('\\')[-1] }}</span>
+          <button class="btn xs danger" style="margin-left:8px" onclick="clearTemplate()">移除</button>
+        </div>
+        {% else %}
+        <div class="note mb12">当前使用系统默认模板</div>
+        {% endif %}
+        <div class="drop" id="tplDrop">
+          <b>上传模板 .docx</b><span class="small">点击或拖入</span>
+          <input type="file" id="tplInput" accept=".docx" class="hide">
+        </div>
+      </div>
+    </div>
+
+    {# ---------- 参考材料 ---------- #}
+    <div class="card mt12" style="align-self:start">
+      <div class="card-h"><h2>核对参考材料</h2></div>
+      <div class="card-b">
+        <p class="lead">
+          本项目专用的 A 类竞赛表 / 成绩排名表。**没配的会自动沿用全校通用的那份**，
+          所以全校共用的表只需在一处上传。
+        </p>
+
+        {% for kind, title, accept in [
+            ('competition', 'A 类竞赛申报汇总表', '.xls,.xlsx,.csv'),
+            ('ranking', '学生成绩排名表', '.xls,.xlsx,.csv'),
+            ('other', '其他核对材料', '.xls,.xlsx,.csv,.pdf,.docx')] %}
+        <div class="mt12" style="border-top:1px solid var(--line2);padding-top:10px">
+          <div class="flex">
+            <b class="small">{{ title }}</b><div class="sp"></div>
+            <button class="btn xs" onclick="document.getElementById('rf-{{ kind }}').click()">上传</button>
+            <input type="file" id="rf-{{ kind }}" multiple accept="{{ accept }}" class="hide"
+                   onchange="upRef('{{ kind }}', this.files)">
+          </div>
+          {% set own = ref_rows | selectattr('kind', 'equalto', kind) | list %}
+          {% if own %}
+          <table class="tb mt6">
+            <tbody>
+            {% for r in own %}
+              <tr>
+                <td>
+                  <div class="small">{{ r.name }}</div>
+                  <div class="mut small">{{ (r.size/1024)|round(0)|int }} KB · {{ r.created_at | dt }}</div>
+                </td>
+                <td class="tar" style="width:70px">
+                  <button class="btn xs danger" onclick="delRef({{ r.id }}, '{{ r.name }}')">删除</button>
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          {% else %}
+          <div class="mut small mt6">
+            未单独配置 ·
+            沿用全校通用：
+            {% set gl = global_ref | selectattr('kind', 'equalto', kind) | list %}
+            {% if gl %}{% for g in gl %}{{ g.name }}{% if not loop.last %}、{% endif %}{% endfor %}
+            {% else %}<span style="color:var(--warn)">（也没有，建议先上传）</span>{% endif %}
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+
+        {% if meta.competition_n or meta.ranking_n %}
+        <div class="note ok mt12">
+          当前生效：A 类竞赛 {{ meta.competition_n }} 条（{{ meta.competition_src or '—' }}）；
+          成绩表 {{ meta.ranking_n }} 条学号（{{ meta.ranking_src or '—' }}）
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    {# ---------- 危险区 ---------- #}
+    {% if cu.is_admin %}
+    <div class="card mt12" style="align-self:start">
+      <div class="card-h"><h2>项目管理</h2></div>
+      <div class="card-b">
+        <div class="flex wrap" style="gap:8px">
+          {% if p.status == 'active' %}
+          <button class="btn sm" onclick="arch()">归档（不删除，可恢复）</button>
+          {% else %}
+          <button class="btn sm" onclick="restore()">恢复启用</button>
+          {% endif %}
+          <button class="btn sm danger" onclick="delProgram()">删除项目</button>
+        </div>
+        <div class="note mt12">
+          归档 = 列表里隐藏、不能新建批次，但历史材料与结论都留着。
+          删除会校验：项目下还有批次或参考材料时会被拒绝，避免误删已审材料。
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% include '_nl_rules.html' %}
+
+{# ---------- 批次 ---------- #}
+<div class="card">
+  <div class="card-h"><h2>本项目下的批次</h2><div class="sp"></div>
+    <a class="btn sm" href="{{ url_for('main.batches') }}">新建批次 →</a></div>
+  <div class="card-b tight">
+    {% if batches %}
+    <table class="tb">
+      <thead><tr><th>批次</th><th class="num">材料</th><th class="num">已出结论</th>
+        <th>创建时间</th><th style="width:80px"></th></tr></thead>
+      <tbody>
+      {% for b in batches %}
+        <tr>
+          <td style="font-weight:500">{{ b.name }}</td>
+          <td class="num">{{ b.n_files }}</td>
+          <td class="num">{{ b.n_analyzed }}</td>
+          <td class="mut small">{{ b.created_at | dt }}</td>
+          <td class="tar"><a class="btn xs" href="{{ url_for('main.batch_detail', bid=b.id) }}">进入</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty"><div class="ic">📦</div>
+      <div>这个项目下还没有批次</div>
+      <a class="btn pri sm mt12" href="{{ url_for('main.batches') }}">去建批次</a></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+var PID = {{ p.id }};
+var CATALOG = {{ catalog | tojson }};
+var SCHEME = {{ p.scheme | tojson }};
+var CATMAP = {};
+CATALOG.forEach(function (x) { CATMAP[x[0]] = x[1]; });
+
+/* ---------------- 板块方案编辑器 ---------------- */
+function renderScheme() {
+  var box = document.getElementById('schemeList');
+  var h = '<table class="tb"><thead><tr><th style="width:56px">顺序</th>' +
+          '<th style="width:150px">板块</th><th>显示名称</th>' +
+          '<th style="width:76px">必需</th><th style="width:110px"></th></tr></thead><tbody>';
+  SCHEME.forEach(function (s, i) {
+    h += '<tr>' +
+      '<td><div style="display:flex;gap:4px">' +
+      '<button class="btn xs ghost" onclick="mv(' + i + ',-1)" ' + (i === 0 ? 'disabled' : '') + '>↑</button>' +
+      '<button class="btn xs ghost" onclick="mv(' + i + ',1)" ' + (i === SCHEME.length - 1 ? 'disabled' : '') + '>↓</button>' +
+      '</div></td>' +
+      '<td class="mono small">' + s.key + '</td>' +
+      '<td><input type="text" value="' + (s.label || CATMAP[s.key] || '') + '" ' +
+      'oninput="SCHEME[' + i + '].label=this.value"></td>' +
+      '<td><input type="checkbox" ' + (s.required ? 'checked' : '') +
+      ' onchange="SCHEME[' + i + '].required=this.checked"></td>' +
+      '<td class="tar"><button class="btn xs danger" onclick="rm(' + i + ')">移除</button></td>' +
+      '</tr>';
+  });
+  h += '</tbody></table>';
+  box.innerHTML = h;
+  // 可选板块下拉（排除已选）
+  var used = {}; SCHEME.forEach(function (s) { used[s.key] = 1; });
+  var sel = document.getElementById('addKey');
+  sel.innerHTML = CATALOG.filter(function (x) { return !used[x[0]]; })
+    .map(function (x) { return '<option value="' + x[0] + '">' + x[1] + '（' + x[0] + '）</option>'; })
+    .join('');
+}
+function mv(i, d) {
+  var j = i + d;
+  if (j < 0 || j >= SCHEME.length) return;
+  var t = SCHEME[i]; SCHEME[i] = SCHEME[j]; SCHEME[j] = t;
+  renderScheme();
+}
+function rm(i) { SCHEME.splice(i, 1); renderScheme(); }
+function addSec() {
+  var k = document.getElementById('addKey').value;
+  if (!k) return;
+  SCHEME.push({ key: k, label: CATMAP[k] || k, required: false });
+  renderScheme();
+}
+function saveScheme() {
+  wbApi('/api/programs/' + PID + '/scheme', { method: 'POST', body: { scheme: SCHEME } })
+    .then(function (j) {
+      if (!j.ok) { wbToast(j.error, 'bad'); return; }
+      wbToast('板块方案已保存', 'ok');
+      setTimeout(function () { location.reload(); }, 600);
+    });
+}
+function applyPreset() {
+  var name = document.getElementById('presetSel').value;
+  if (!confirm('套用「' + name + '」预设会覆盖当前板块方案，继续？')) return;
+  wbApi('/api/programs/' + PID + '/preset', { method: 'POST', body: { preset: name } })
+    .then(function (j) {
+      if (!j.ok) { wbToast(j.error, 'bad'); return; }
+      SCHEME = j.scheme; renderScheme();
+      wbToast('已套用预设，记得保存', 'ok');
+    });
+}
+renderScheme();
+
+/* ---------------- 基本信息 ---------------- */
+function saveBasic() {
+  var body = {
+    name: document.getElementById('pName').value.trim(),
+    category: document.getElementById('pCat').value,
+    quota: document.getElementById('pQuota').value || 0
+  };
+  if (!body.name) { wbToast('名称不能为空', 'warn'); return; }
+  wbApi('/api/programs/' + PID, { method: 'POST', body: body }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已保存', 'ok');
+    setTimeout(function () { location.reload(); }, 500);
+  });
+}
+
+/* ---------------- 规则覆盖 ---------------- */
+function saveRules() {
+  var items = {};
+  document.querySelectorAll('.prv').forEach(function (el) {
+    var v = el.value.trim();
+    if (v === '') return;
+    if (isNaN(Number(v))) { wbToast('「' + el.dataset.key + '」不是数字', 'bad'); return; }
+    items[el.dataset.key] = Number(v);
+  });
+  if (!Object.keys(items).length) { wbToast('没有填写任何覆盖项', 'warn'); return; }
+  wbApi('/api/programs/' + PID + '/rules', { method: 'POST', body: { items: items } })
+    .then(function (j) {
+      if (!j.ok) { wbToast(j.error, 'bad'); return; }
+      wbToast('已保存 ' + j.saved + ' 项覆盖', 'ok');
+      setTimeout(function () { location.reload(); }, 700);
+    });
+}
+function resetRules() {
+  if (!confirm('清空本项目的全部规则覆盖，改为继承全局？')) return;
+  wbApi('/api/programs/' + PID + '/rules/reset', { method: 'POST', body: {} })
+    .then(function (j) {
+      if (!j.ok) { wbToast(j.error, 'bad'); return; }
+      wbToast('已恢复继承', 'ok');
+      setTimeout(function () { location.reload(); }, 600);
+    });
+}
+
+/* ---------------- 模板 / 参考材料 ---------------- */
+var tplDrop = document.getElementById('tplDrop');
+var tplInput = document.getElementById('tplInput');
+tplDrop.onclick = function () { tplInput.click(); };
+tplInput.onchange = function () { if (tplInput.files.length) upTemplate(tplInput.files[0]); };
+['dragenter', 'dragover'].forEach(function (e) {
+  tplDrop.addEventListener(e, function (ev) { ev.preventDefault(); tplDrop.classList.add('over'); });
+});
+['dragleave', 'drop'].forEach(function (e) {
+  tplDrop.addEventListener(e, function (ev) { ev.preventDefault(); tplDrop.classList.remove('over'); });
+});
+tplDrop.addEventListener('drop', function (ev) {
+  if (ev.dataTransfer.files.length) upTemplate(ev.dataTransfer.files[0]);
+});
+function upTemplate(f) {
+  var fd = new FormData(); fd.append('file', f);
+  wbApi('/api/programs/' + PID + '/template', { method: 'POST', body: fd }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('模板已上传', 'ok');
+    setTimeout(function () { location.reload(); }, 600);
+  });
+}
+function clearTemplate() {
+  wbApi('/api/programs/' + PID + '/template', { method: 'DELETE' }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已恢复默认模板', 'ok');
+    setTimeout(function () { location.reload(); }, 500);
+  });
+}
+function upRef(kind, files) {
+  if (!files || !files.length) return;
+  wbUpload('/api/programs/' + PID + '/refdata/' + kind, files).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已上传 ' + j.saved.length + ' 个文件', 'ok');
+    setTimeout(function () { location.reload(); }, 600);
+  });
+}
+function delRef(id, name) {
+  if (!confirm('删除「' + name + '」？')) return;
+  wbApi('/api/programs/refdata/' + id, { method: 'DELETE' }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已删除', 'ok');
+    setTimeout(function () { location.reload(); }, 500);
+  });
+}
+
+/* ---------------- 归档 / 删除 ---------------- */
+function arch() {
+  if (!confirm('归档这个项目？归档后不能再建批次，历史数据保留。')) return;
+  wbApi('/api/programs/' + PID + '/archive', { method: 'POST' }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已归档', 'ok');
+    setTimeout(function () { location.reload(); }, 500);
+  });
+}
+function restore() {
+  wbApi('/api/programs/' + PID + '/restore', { method: 'POST' }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已恢复', 'ok');
+    setTimeout(function () { location.reload(); }, 500);
+  });
+}
+function delProgram() {
+  if (!confirm('确定删除这个奖学金项目？此操作不可撤销。')) return;
+  wbApi('/api/programs/' + PID, { method: 'DELETE' }).then(function (j) {
+    if (!j.ok) {
+      if (confirm(j.error + '\n\n要强制删除吗？（会把这些批次与参考材料解绑，但不会删除材料本身）')) {
+        wbApi('/api/programs/' + PID + '?force=1', { method: 'DELETE' }).then(function (k) {
+          if (!k.ok) { wbToast(k.error, 'bad'); return; }
+          wbToast('已强制删除', 'ok');
+          location.href = '/programs';
+        });
+      }
+      return;
+    }
+    wbToast('已删除', 'ok');
+    location.href = '/programs';
+  });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block title %}模型设置 · {{ app_name }}{% endblock %}
+{% block crumb %}<a href="{{ url_for('main.dashboard') }}">总览</a> / <b>模型设置</b>{% endblock %}
+
+{% block body %}
+<div class="note acc mb12">
+  使用 <b>OpenAI 兼容接口</b>：填 base_url + api_key + 模型名即可。
+  一套配置通用 DeepSeek / 通义千问 / 智谱 / 月之暗面 / OpenAI，
+  以及本机 vLLM、Ollama 等（base_url 指向本地地址即可）。
+  模型必须是**多模态（能读图）**的，否则读图会失败。
+</div>
+
+<div class="grid g4 mb12">
+  <div class="stat accent"><div class="k">今日调用</div><div class="v">{{ calls }}</div><div class="s">次</div></div>
+  <div class="stat accent"><div class="k">今日读图</div><div class="v">{{ images }}</div><div class="s">张</div></div>
+  <div class="stat"><div class="k">今日剩余额度</div><div class="v">{{ left }}</div><div class="s">张（用于成本闸门）</div></div>
+  <div class="stat"><div class="k">已配置模型</div><div class="v">{{ rows | length }}</div><div class="s">点「启用」切换</div></div>
+</div>
+
+<div class="grid g2">
+  <div class="card" style="align-self:start">
+    <div class="card-h"><h2 id="formTitle">新增模型配置</h2></div>
+    <div class="card-b">
+      <input type="hidden" id="mId">
+      <label class="fld"><span>配置名称</span>
+        <input type="text" id="mName" placeholder="如：通义千问-VL（生产）" value="默认模型"></label>
+      <label class="fld"><span>Base URL</span>
+        <input type="text" id="mBase" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"></label>
+      <label class="fld"><span>模型名</span>
+        <input type="text" id="mModel" placeholder="如：qwen-vl-max / gpt-4o / glm-4v"></label>
+      <label class="fld"><span>API Key</span>
+        <input type="password" id="mKey" placeholder="留空表示不修改（编辑时）">
+        <span class="hint">用 Fernet 加密后存库，密钥在 data/instance/api_key.key（权限 600）</span></label>
+      <label class="flex mb12" style="gap:7px;cursor:pointer">
+        <input type="checkbox" id="mJson" checked>
+        <span class="small">使用 response_format=json_object（部分兼容接口不支持会自动降级）</span>
+      </label>
+      <div class="flex">
+        <button class="btn pri" onclick="saveModel()">保存</button>
+        <button class="btn ghost" onclick="resetForm()">清空</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><h2>已配置模型</h2></div>
+    <div class="card-b tight">
+      {% if rows %}
+      <table class="tb">
+        <thead><tr><th>名称</th><th>模型</th><th style="width:80px">状态</th><th style="width:210px"></th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+          <tr>
+            <td>
+              <div style="font-weight:500">{{ r.name }}</div>
+              <div class="mut small mono">{{ r.base_url }}</div>
+              <div class="mut small">key: {{ r.key_mask }}</div>
+            </td>
+            <td class="mono small">{{ r.model }}</td>
+            <td>{% if r.is_active %}<span class="chip c-ok">启用中</span>
+                {% else %}<span class="chip c-muted">未启用</span>{% endif %}</td>
+            <td class="tar nowrap">
+              <button class="btn xs ghost" onclick="testModel({{ r.id }})">测试</button>
+              {% if not r.is_active %}
+              <button class="btn xs" onclick="activate({{ r.id }})">启用</button>
+              {% endif %}
+              <button class="btn xs ghost" onclick='editModel({{ r | tojson }})'>编辑</button>
+              <button class="btn xs danger" onclick="delModel({{ r.id }})">删除</button>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty"><div class="ic">🤖</div>
+        <div>还没有配置模型</div>
+        <div class="mut small mt6">填好左边表单保存后，就能开始读图</div></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card mt12">
+  <div class="card-h"><h2>常见服务商 base_url 参考</h2></div>
+  <div class="card-b tight">
+    <table class="tb">
+      <thead><tr><th>服务商</th><th>Base URL</th><th>可用视觉模型示例</th></tr></thead>
+      <tbody>
+        <tr><td>OpenAI</td><td class="mono small">https://api.openai.com/v1</td><td class="mono small">gpt-4o / gpt-4o-mini</td></tr>
+        <tr><td>通义千问（阿里云）</td><td class="mono small">https://dashscope.aliyuncs.com/compatible-mode/v1</td><td class="mono small">qwen-vl-max</td></tr>
+        <tr><td>智谱 GLM</td><td class="mono small">https://open.bigmodel.cn/api/paas/v4</td><td class="mono small">glm-4v-plus</td></tr>
+        <tr><td>月之暗面</td><td class="mono small">https://api.moonshot.cn/v1</td><td class="mono small">moonshot-v1-8k-vision-preview</td></tr>
+        <tr><td>本机 Ollama</td><td class="mono small">http://127.0.0.1:11434/v1</td><td class="mono small">llava / qwen2.5vl</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card mt12">
+  <div class="card-h">
+    <h2>送模型前遮挡敏感信息</h2><div class="sp"></div>
+    <span class="chip {{ 'c-ok' if privacy_on else 'c-muted' }}"
+          id="pvState">{{ '已开启' if privacy_on else '已关闭' }}</span>
+  </div>
+  <div class="card-b">
+    <div class="flex wrap" style="gap:10px">
+      <label class="flex" style="gap:7px;cursor:pointer">
+        <input type="checkbox" id="pvToggle" {{ 'checked' if privacy_on }}
+               onchange="pvSet(this.checked)">
+        <span>开启遮挡：成绩单、等级证书上的<b>身份证号 / 手机号 / 银行卡号 / 学号</b>
+          会在本地涂黑后再送给模型</span>
+      </label>
+    </div>
+    <div class="note mt12">
+      遮挡是<b>纯本地</b>做的（RapidOCR 找位置 + 直接涂黑），图片不出本机就能处理完。
+      代价：多跑一遍 OCR 会略慢，而且如果遮挡区域过大可能盖掉证书编号等信息。
+      落盘的原始图片不受影响，人工复核时仍看得到原图。
+    </div>
+    <div class="flex wrap mt12" style="gap:8px;align-items:center">
+      <button class="btn sm" onclick="document.getElementById('pvFile').click()">
+        检查一张图会被遮什么</button>
+      <input type="file" id="pvFile" accept="image/*" class="hide" onchange="pvCheck(this.files[0])">
+      <span class="mut small">不会落盘、不改动任何数据</span>
+    </div>
+    <div id="pvResult" class="mt12"></div>
+  </div>
+</div>
+
+<div class="card mt12">
+  <div class="card-h"><h2>隐私提示</h2></div>
+  <div class="card-b">
+    <div class="note warn">
+      学生的成绩单、等级证书上常含身份证号。图片会以 base64 送给你配置的服务商。
+      建议：
+      ① 只选承诺「不用于模型训练」的服务商；
+      ② 能本地部署就本地部署（Ollama + 视觉模型）；
+      ③ 本系统预留了「送模型前本地遮挡身份证号」的开关（阶段 3 实现），可先在配置文件里关掉上传敏感材料。
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+function resetForm() {
+  document.getElementById('mId').value = '';
+  document.getElementById('formTitle').textContent = '新增模型配置';
+  ['mName', 'mBase', 'mModel', 'mKey'].forEach(function (i) { document.getElementById(i).value = ''; });
+  document.getElementById('mJson').checked = true;
+}
+function editModel(r) {
+  document.getElementById('mId').value = r.id;
+  document.getElementById('formTitle').textContent = '编辑：' + r.name;
+  document.getElementById('mName').value = r.name;
+  document.getElementById('mBase').value = r.base_url;
+  document.getElementById('mModel').value = r.model;
+  document.getElementById('mKey').value = '';
+  document.getElementById('mJson').checked = !!(r.extra_obj && r.extra_obj.json_mode);
+  window.scrollTo(0, 0);
+}
+function saveModel() {
+  var body = {
+    id: document.getElementById('mId').value || null,
+    name: document.getElementById('mName').value.trim() || '默认模型',
+    base_url: document.getElementById('mBase').value.trim(),
+    model: document.getElementById('mModel').value.trim(),
+    api_key: document.getElementById('mKey').value.trim(),
+    json_mode: document.getElementById('mJson').checked
+  };
+  if (!body.base_url || !body.model) { wbToast('base_url 与模型名必填', 'warn'); return; }
+  wbApi('/api/settings/model', { method: 'POST', body: body }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已保存', 'ok');
+    setTimeout(function () { location.reload(); }, 600);
+  });
+}
+function activate(id) {
+  wbApi('/api/settings/model/' + id + '/activate', { method: 'POST' }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已启用', 'ok');
+    setTimeout(function () { location.reload(); }, 500);
+  });
+}
+function delModel(id) {
+  if (!confirm('删除这个模型配置？')) return;
+  wbApi('/api/settings/model/' + id, { method: 'DELETE' }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已删除', 'ok');
+    setTimeout(function () { location.reload(); }, 500);
+  });
+}
+function pvSet(on) {
+  wbApi('/api/settings/privacy', { method: 'POST', body: { enabled: on } }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    var el = document.getElementById('pvState');
+    el.textContent = j.enabled ? '已开启' : '已关闭';
+    el.className = 'chip ' + (j.enabled ? 'c-ok' : 'c-muted');
+    wbToast(j.enabled ? '已开启遮挡（下次读图生效）' : '已关闭遮挡', 'ok');
+  });
+}
+
+function pvCheck(f) {
+  if (!f) return;
+  var fd = new FormData(); fd.append('file', f);
+  var box = document.getElementById('pvResult');
+  box.innerHTML = '<div class="mut small">正在识别（首次跑要加载 OCR 模型，稍等）…</div>';
+  wbApi('/api/settings/privacy/check', { method: 'POST', body: fd }).then(function (j) {
+    if (!j.ok) { box.innerHTML = '<div class="note bad">' + (j.error || '识别失败') + '</div>'; return; }
+    if (!j.hits.length) { box.innerHTML = '<div class="note ok">这张图没有识别到需要遮挡的号码。</div>'; return; }
+    var h = '<div class="note warn mb6">会遮挡 ' + j.hits.length + ' 处：</div><table class="tb"><tbody>';
+    j.hits.forEach(function (x) {
+      h += '<tr><td class="small">' + x.kind + '</td><td class="mono small">' + x.text + '</td></tr>';
+    });
+    box.innerHTML = h + '</tbody></table>';
+  });
+}
+
+function testModel(id) {
+  wbToast('正在测试连通性…', '', 1500);
+  wbApi('/api/settings/model/test', { method: 'POST', body: { id: id } }).then(function (j) {
+    wbToast(j.message || (j.ok ? '连通正常' : '测试失败'), j.ok ? 'ok' : 'bad', 5000);
+  });
+}
+</script>
+{% endblock %}

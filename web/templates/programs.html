@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}奖学金项目 · {{ app_name }}{% endblock %}
+{% block crumb %}<a href="{{ url_for('main.dashboard') }}">总览</a> / <b>奖学金项目</b>{% endblock %}
+
+{% block body %}
+<div class="note acc mb12">
+  一个<b>奖学金项目</b>就是一套申报口径：看哪些板块、各阈值多少、用哪份模板导出。
+  不同奖学金（国家奖学金 / 国家励志奖学金 / 校级奖学金…）在这里分开建，
+  材料、审核结论、导出文件互不干扰。<b>引擎本身不用改</b>，只是按项目的方案来展示与判定。
+</div>
+
+<div class="grid g2">
+  <div class="card" style="align-self:start">
+    <div class="card-h"><h2>新建奖学金项目</h2></div>
+    <div class="card-b">
+      <label class="fld"><span>名称</span>
+        <input type="text" id="pName" placeholder="如：2024-2025学年 校级奖学金"></label>
+      <div class="row2">
+        <label class="fld"><span>层级 / 类别</span>
+          <select id="pCat">
+            {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+          </select></label>
+        <label class="fld"><span>名额（可选）</span>
+          <input type="number" id="pQuota" placeholder="0" min="0"></label>
+      </div>
+      <label class="fld"><span>板块方案（可事后调整）</span>
+        <select id="pPreset">
+          {% for n in presets %}<option value="{{ n }}">{{ n }}（{{ n }}口径）</option>{% endfor %}
+        </select>
+        <span class="hint">决定要看哪些板块、顺序与名称；建好后可在详情页逐项改</span></label>
+      <label class="fld"><span>说明（可选）</span>
+        <textarea id="pDesc" rows="3" placeholder="如：面向 2024 级，评分细则见附件"></textarea></label>
+      {% if cu.is_admin %}
+      <button class="btn pri" onclick="createProgram()">创建</button>
+      {% else %}
+      <div class="note">只有管理员可以创建奖学金项目。</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><h2>全部项目</h2><div class="sp"></div>
+      <span class="mut small">{{ rows | length }} 个</span></div>
+    <div class="card-b tight">
+      {% if rows %}
+      <table class="tb">
+        <thead><tr><th>项目</th><th style="width:80px">类别</th>
+          <th class="num" style="width:64px">批次</th><th class="num" style="width:64px">材料</th>
+          <th style="width:78px">状态</th><th style="width:86px"></th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+          <tr>
+            <td>
+              <div style="font-weight:500">{{ r.name }}</div>
+              <div class="mut small">
+                {{ r.scheme | length }} 个板块{% if r.quota %} · 名额 {{ r.quota }}{% endif %}
+                {% if r.template_path %} · 自定义模板{% endif %}
+              </div>
+            </td>
+            <td><span class="chip c-muted">{{ r.category }}</span></td>
+            <td class="num">{{ r.n_batches }}</td>
+            <td class="num">{{ r.n_files }}</td>
+            <td>{% if r.status == 'active' %}<span class="chip c-ok">启用中</span>
+                {% else %}<span class="chip c-muted">已归档</span>{% endif %}</td>
+            <td class="tar"><a class="btn xs" href="{{ url_for('programs.detail', pid=r.id) }}">管理</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty"><div class="ic">🎓</div>
+        <div>还没有奖学金项目</div>
+        <div class="mut small mt6">先在左边建一个，然后就能在里面建批次、传材料</div></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+function createProgram() {
+  var body = {
+    name: document.getElementById('pName').value.trim(),
+    category: document.getElementById('pCat').value,
+    quota: document.getElementById('pQuota').value || 0,
+    preset: document.getElementById('pPreset').value,
+    description: document.getElementById('pDesc').value.trim()
+  };
+  if (!body.name) { wbToast('请填写名称', 'warn'); return; }
+  wbApi('/api/programs', { method: 'POST', body: body }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已创建', 'ok');
+    location.href = '/programs/' + j.id;
+  });
+}
+</script>
+{% endblock %}

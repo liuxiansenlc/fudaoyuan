@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}规则与阈值 · {{ app_name }}{% endblock %}
+{% block crumb %}<a href="{{ url_for('main.dashboard') }}">总览</a> / <b>规则与阈值</b>{% endblock %}
+
+{% block tools %}
+{% if cu.is_admin %}
+<button class="btn sm" onclick="resetAll()">全部恢复默认</button>
+<button class="btn pri sm" onclick="saveRules()">保存修改</button>
+{% endif %}
+{% endblock %}
+
+{% set nl_pid = none %}
+{% block body %}
+<div class="note acc mb12">
+  这里是<b>全校通用</b>的判定阈值与规则。单个奖学金项目如果需要不同口径，
+  到「奖学金项目 → 规则覆盖 / 自定义规则」里单独设置，项目级设置优先。
+</div>
+
+<div class="note mb12">
+  所有判定阈值集中在这里，改完点保存 **立即生效**（新建的分析任务就会用新值；已有结论需重新出结论才更新）。
+  带 <span class="chip c-acc" style="font-size:10px">已改</span> 标记的是你改动过的项。值为空或非法时会被拒绝保存。
+</div>
+
+{% if not cu.is_admin %}
+<div class="alert bad">只有管理员可以修改规则，你现在是只读模式。</div>
+{% endif %}
+
+<div class="grid g2">
+{% for g in groups %}
+  <div class="card" style="align-self:start">
+    <div class="card-h">
+      <h2>{{ g.title }}</h2><div class="sp"></div>
+      <span class="mut small">{{ g['items'] | length }} 项</span>
+    </div>
+    <div class="card-b">
+      <p class="lead mb12">{{ g.desc }}</p>
+      {% for it in g['items'] %}
+      <div class="flex" style="align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--line2)"
+           data-key="{{ it['key'] }}">
+        <div style="flex:1;min-width:0">
+          <div class="mono" style="color:var(--tx)">{{ it['name'] }}</div>
+          {% if it.hint %}<div class="mut small" style="margin-top:2px">{{ it['hint'] }}</div>{% endif %}
+        </div>
+        <div style="width:104px;flex:none;text-align:right">
+          <input type="number" step="any" class="rv" data-key="{{ it['key'] }}"
+                 value="{{ it['value'] }}" {{ 'disabled' if not cu.is_admin }}>
+        </div>
+        <div style="width:46px;flex:none;text-align:right">
+          {% if overrides.get(it.key) is not none %}
+          <span class="chip c-acc" style="font-size:10px" title="当前值 {{ overrides.get(it.key) }}">已改</span>
+          {% else %}<span class="mut small">—</span>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+{% endfor %}
+</div>
+{% include '_nl_rules.html' %}
+{% endblock %}
+
+{% block js %}
+<script>
+function saveRules() {
+  var items = {};
+  var bad = [];
+  document.querySelectorAll('.rv').forEach(function (el) {
+    var v = el.value.trim();
+    if (v === '') { bad.push(el.dataset.key); return; }
+    var n = Number(v);
+    if (isNaN(n)) { bad.push(el.dataset.key); return; }
+    items[el.dataset.key] = n;
+  });
+  if (bad.length) { wbToast('这些项的值不合法：' + bad.join('、'), 'bad', 5000); return; }
+  wbApi('/api/rules', { method: 'PUT', body: { items: items } }).then(function (j) {
+    if (!j.ok) { wbToast(j.error || '保存失败', 'bad'); return; }
+    var extra = (j.rejected && j.rejected.length) ? '（被拒绝：' + j.rejected.join('、') + '）' : '';
+    wbToast('已保存 ' + j.saved + ' 项' + extra, 'ok');
+    setTimeout(function () { location.reload(); }, 800);
+  });
+}
+function resetAll() {
+  if (!confirm('把所有阈值恢复成默认值？')) return;
+  wbApi('/api/rules/reset', { method: 'POST', body: {} }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已恢复默认', 'ok');
+    setTimeout(function () { location.reload(); }, 700);
+  });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,212 @@
+{# 自然语言规则区块。使用前先在包含它的模板里 {% set nl_pid = ... %} #}
+{# nl_pid = None 表示全局规则；为数字表示某个奖学金项目专属 #}
+<div class="card mt12" id="nlRules">
+  <div class="card-h">
+    <h2>自定义规则（自然语言）</h2><div class="sp"></div>
+    <span class="mut small">
+      {{ '全校通用（所有奖学金都生效）' if nl_pid is none else '只对本奖学金生效' }}
+    </span>
+  </div>
+  <div class="card-b">
+
+    <div class="note acc mb12">
+      用中文写清楚你要的规矩，系统会**先编译成结构化规则给你确认**，确认后才保存。
+      编译只在你点「编译」时调一次模型；<b>实际审核时走的是本地纯函数，不联网、不随机、可复现</b>。
+      编译产物会做白名单校验——发明字段/动作的规则一律拒绝。
+    </div>
+
+    {% if cu.is_admin %}
+    <label class="fld">
+      <span>用一句话描述规则</span>
+      <textarea id="nlText" rows="3"
+        placeholder="例如：省级竞赛不认院级证书&#10;例如：国家级竞赛证书必须能核对到获奖人姓名&#10;例如：四级总分不到 425 不算通过"></textarea>
+      <span class="hint">写清楚「在什么情况下」+「要怎么办」，系统会翻译成结构化条件</span>
+    </label>
+    <div class="flex wrap" style="gap:8px">
+      <button class="btn pri" id="nlCompileBtn" onclick="nlCompile()">编译</button>
+      <span class="mut small" id="nlStat"></span>
+    </div>
+    {% else %}
+    <div class="note">只有管理员可以新增规则，你现在是只读。</div>
+    {% endif %}
+
+    {# ---------- 编译结果确认区 ---------- #}
+    <div id="nlConfirm" class="hide mt12" style="border-top:1px dashed var(--line);padding-top:12px">
+      <h3>编译结果（请确认）</h3>
+      <div class="note ok" id="nlExplain"></div>
+
+      <div class="row2 mt12">
+        <div>
+          <div class="small mut2 mb6">结构化规则（只读，可核对）</div>
+          <pre class="mono" id="nlDsl" style="max-height:230px;overflow:auto;background:var(--mutedbg);
+            padding:10px;border-radius:8px;margin:0;font-size:11px;line-height:1.6"></pre>
+        </div>
+        <div>
+          <div class="small mut2 mb6">影响预览（拿已有结论试跑这条规则）</div>
+          <div id="nlPreview" class="small" style="max-height:230px;overflow:auto"></div>
+        </div>
+      </div>
+
+      <div class="flex wrap mt12" style="gap:8px">
+        <div style="width:130px">
+          <label class="fld" style="margin:0"><span>优先级（越大越先）</span>
+            <input type="number" id="nlPriority" value="100" min="0" max="999"></label>
+        </div>
+        <div class="sp"></div>
+        <button class="btn pri" onclick="nlSave('enabled')">保存并启用</button>
+        <button class="btn" onclick="nlSave('draft')">仅存为草稿</button>
+        <button class="btn ghost" onclick="nlCancel()">取消</button>
+      </div>
+    </div>
+
+    {# ---------- 已保存的规则 ---------- #}
+    <div id="nlList" class="mt12" style="border-top:1px dashed var(--line);padding-top:12px">
+      <div class="flex"><h3 style="margin:0">已保存的规则</h3><div class="sp"></div>
+        <span class="mut small" id="nlCount"></span></div>
+      <div id="nlListBody" class="mt6"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+var NL_PID = {{ 'null' if nl_pid is none else nl_pid }};
+var _nlBase = NL_PID === null ? '/api/rules/global' : ('/api/programs/' + NL_PID);
+var _nlPending = null;
+var _nlCatalog = null;
+
+function nlApi(path, body, method) {
+  return wbApi(_nlBase + path, { method: method || 'POST', body: body });
+}
+
+function nlCompile() {
+  var nl = document.getElementById('nlText').value.trim();
+  if (nl.length < 4) { wbToast('请把规则写得具体一点', 'warn'); return; }
+  var btn = document.getElementById('nlCompileBtn');
+  btn.disabled = true; btn.textContent = '编译中…';
+  document.getElementById('nlStat').textContent = '正在调用模型翻译…';
+  nlApi('/nl_rules/compile', { nl: nl }).then(function (j) {
+    btn.disabled = false; btn.textContent = '编译';
+    if (!j.ok) {
+      document.getElementById('nlStat').textContent = '';
+      wbToast(j.error || '编译失败', 'bad', 6000);
+      return;
+    }
+    _nlPending = j.dsl;
+    document.getElementById('nlStat').textContent = '编译完成，请确认';
+    document.getElementById('nlConfirm').classList.remove('hide');
+    document.getElementById('nlExplain').textContent = j.explain || '';
+    document.getElementById('nlDsl').textContent = JSON.stringify(j.dsl, null, 2);
+    var p = j.preview || {};
+    var html = '';
+    if (!p.n) {
+      html = '<div class="note">拿现有的审核结论试跑，这条规则<b>暂时没有命中任何条目</b>。' +
+             '可能没问题（数据里确实没有这种情况），也可能条件写窄了。</div>';
+    } else {
+      html = '<div class="note warn mb6">会影响 <b>' + p.n + '</b> 条已审条目：</div>';
+      html += '<table class="tb"><tbody>';
+      (p.hits || []).forEach(function (h) {
+        html += '<tr><td><b>' + h.student + '</b><div class="mut small">' +
+                (h.item || '').replace(/</g, '&lt;') + '</div></td>' +
+                '<td class="nowrap small">' + h.before + ' → <b>' + h.after + '</b>' +
+                (h.delta ? '（' + h.delta + ' 分）' : '') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      if (p.n > (p.hits || []).length) {
+        html += '<div class="mut small mt6">… 还有 ' + (p.n - p.hits.length) + ' 条</div>';
+      }
+    }
+    document.getElementById('nlPreview').innerHTML = html;
+  });
+}
+
+function nlCancel() {
+  _nlPending = null;
+  document.getElementById('nlConfirm').classList.add('hide');
+}
+
+function nlSave(status) {
+  if (!_nlPending) return;
+  var nl = document.getElementById('nlText').value.trim();
+  nlApi('/nl_rules', { nl: nl, dsl: _nlPending, status: status,
+                       priority: parseInt(document.getElementById('nlPriority').value || '100', 10) })
+    .then(function (j) {
+      if (!j.ok) { wbToast(j.error, 'bad', 6000); return; }
+      wbToast(status === 'enabled' ? '规则已启用' : '已存为草稿', 'ok');
+      setTimeout(function () { location.reload(); }, 600);
+    });
+}
+
+function nlLoad() {
+  nlApi('/nl_rules', null, 'GET').then(function (j) {
+    if (!j.ok) return;
+    _nlCatalog = j.catalog;
+    var rows = j.rules || [];
+    document.getElementById('nlCount').textContent = rows.length + ' 条';
+    if (!rows.length) {
+      document.getElementById('nlListBody').innerHTML =
+        '<div class="mut small">还没有自定义规则。系统只按内置阈值判定。</div>';
+      return;
+    }
+    var h = '<table class="tb"><thead><tr><th>规则</th><th style="width:70px">优先级</th>' +
+            '<th style="width:84px">状态</th><th style="width:190px"></th></tr></thead><tbody>';
+    rows.forEach(function (r) {
+      var on = r.status === 'enabled';
+      h += '<tr><td>' +
+        '<div style="font-weight:500">' + (r.nl_text || '').replace(/</g, '&lt;') + '</div>' +
+        '<div class="mut small">' + (r.explain || '') + '</div>' +
+        (r.compile_note ? '<div class="mut small">' + r.compile_note + '</div>' : '') +
+        '</td>' +
+        '<td class="num">' + r.priority + '</td>' +
+        '<td>' + (on ? '<span class="chip c-ok">启用中</span>'
+                     : (r.status === 'draft' ? '<span class="chip c-warn">草稿</span>'
+                                             : '<span class="chip c-muted">已停用</span>')) + '</td>' +
+        '<td class="tar nowrap">' +
+        '<button class="btn xs ghost" onclick="nlToggle(' + r.id + ',' +
+          (on ? "'disabled'" : "'enabled'") + ')">' + (on ? '停用' : '启用') + '</button>' +
+        '<button class="btn xs ghost" onclick="nlPreviewOne(' + r.id + ')">看影响</button>' +
+        '<button class="btn xs danger" onclick="nlDelete(' + r.id + ')">删除</button>' +
+        '</td></tr>';
+    });
+    h += '</tbody></table>';
+    document.getElementById('nlListBody').innerHTML = h;
+  });
+}
+
+function nlToggle(id, status) {
+  wbApi('/api/programs/nl_rules/' + id, { method: 'POST', body: { status: status } })
+    .then(function (j) {
+      if (!j.ok) { wbToast(j.error, 'bad'); return; }
+      wbToast(status === 'enabled' ? '已启用' : '已停用', 'ok');
+      setTimeout(function () { location.reload(); }, 450);
+    });
+}
+
+function nlPreviewOne(id) {
+  var row = null;
+  // 从列表里找到那条 dsl
+  nlApi('/nl_rules', null, 'GET').then(function (j) {
+    var r = (j.rules || []).filter(function (x) { return x.id === id; })[0];
+    if (!r) { wbToast('找不到规则', 'bad'); return; }
+    wbApi('/api/programs/nl_rules/preview',
+          { method: 'POST', body: { dsl: r.dsl_obj, program_id: NL_PID } })
+      .then(function (k) {
+        if (!k.ok) { wbToast(k.error || '预览失败', 'bad'); return; }
+        if (!k.n) { wbToast('这条规则目前没有命中任何已审条目', 'warn', 4000); return; }
+        wbToast('会影响 ' + k.n + ' 条：' + (k.hits || []).slice(0, 3)
+          .map(function (h) { return h.student; }).join('、'), 'ok', 6000);
+      });
+  });
+}
+
+function nlDelete(id) {
+  if (!confirm('删除这条规则？删除后判定会回到内置阈值。')) return;
+  wbApi('/api/programs/nl_rules/' + id, { method: 'DELETE' }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已删除', 'ok');
+    setTimeout(function () { location.reload(); }, 450);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', nlLoad);
+</script>

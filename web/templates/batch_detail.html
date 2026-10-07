@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+{% block title %}{{ b.name }} · {{ app_name }}{% endblock %}
+{% block crumb %}<a href="{{ url_for('main.batches') }}">批次管理</a> /
+  <b>{{ b.name }}</b>
+  {% if program %}· <a href="{{ url_for('programs.detail', pid=program.id) }}">{{ program.name }}</a>{% endif %}
+{% endblock %}
+
+{% block tools %}
+<button class="btn pri sm" id="runBtn" onclick="runBatch()">运行整个批次</button>
+{% endblock %}
+
+{% block body %}
+
+<div class="grid g4 mb12">
+  <div class="stat"><div class="k">材料份数</div><div class="v">{{ st.files }}</div>
+    <div class="s">{{ st.failed }} 份失败</div></div>
+  <div class="stat ok"><div class="k">已出结论</div><div class="v">{{ st.analyzed }}</div>
+    <div class="s">可进入审核</div></div>
+  <div class="stat"><div class="k">奖项条目</div><div class="v">{{ st.n_items }}</div></div>
+  <div class="stat"><div class="k">图片总数</div><div class="v">{{ st.images }}</div></div>
+</div>
+
+{% if not ref_ready %}
+<div class="alert bad mb12" style="display:flex;align-items:center;gap:10px">
+  <span>⚠️ 这个奖学金项目还没有可用的参考数据（A 类竞赛表 / 成绩排名表），
+    配对与资格核验会打折扣。</span>
+  {% if program %}
+  <a class="btn sm" href="{{ url_for('programs.detail', pid=program.id) }}">去配置</a>
+  {% else %}
+  <a class="btn sm" href="{{ url_for('config.refdata') }}">去配置</a>
+  {% endif %}
+</div>
+{% else %}
+<div class="note ok mb12">
+  参考数据：A 类竞赛 <b>{{ ref.meta.competition_n }}</b> 条
+  {% if ref.meta.competition_src %}（{{ ref.meta.competition_src }}）{% endif %} ·
+  成绩表 <b>{{ ref.meta.ranking_n }}</b> 条学号
+  {% if ref.meta.ranking_src %}（{{ ref.meta.ranking_src }}）{% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-h">
+    <h2>运行</h2><div class="sp"></div>
+    <span class="mut small" id="runHint">读图会自动跳过已缓存的图片</span>
+  </div>
+  <div class="card-b">
+    <div id="taskPanel" class="hide">
+      <div class="taskbar mb12">
+        <span class="chip c-blue" id="tkKind">任务</span>
+        <span class="ph" id="tkPhase">准备中…</span>
+        <div class="sp"></div>
+        <span class="pc" id="tkCount"></span>
+      </div>
+      <div class="prog" id="tkBar"><i></i></div>
+      <div class="small mut2 mt6" id="tkMsg"></div>
+    </div>
+    <div id="runIdle">
+      <div class="flex wrap">
+        <button class="btn pri" onclick="runBatch('full')">读图 + 出结论</button>
+        <button class="btn" onclick="runBatch('analyze_only')">只出结论（跳过读图）</button>
+        <span class="mut small">只出结论用于：已读过图、只想重新配对（例如刚改了规则）</span>
+      </div>
+      <div class="flex wrap mt12" style="gap:8px;border-top:1px solid var(--line2);padding-top:12px">
+        <button class="btn" onclick="doExport()">导出标准化 Word 包</button>
+        <span class="mut small">
+          把 {{ st.analyzed }} 份已出结论的材料重排成「板块 → 奖项名 → 紧跟证明图」，
+          打包成一个 zip。待确认与缺图会列在文末清单里，不混进正文。
+        </span>
+      </div>
+      <div id="expDone" class="mt12"></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-h">
+    <h2>上传材料</h2><div class="sp"></div>
+    <span class="mut small">支持多选，可整批拖入</span>
+  </div>
+  <div class="card-b">
+    <div class="drop" id="drop">
+      <b>把学生的 .docx 材料拖到这里，或点击选择</b>
+      <span class="small">可一次选多份；同名文件会自动跳过</span>
+      <input type="file" id="fileInput" multiple accept=".docx" class="hide">
+    </div>
+    <div id="upBar" class="hide mt12">
+      <div class="prog" id="upProg"><i></i></div>
+      <div class="small mut2 mt6" id="upMsg"></div>
+    </div>
+    <div id="upResult" class="mt12"></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-h"><h2>材料清单</h2><div class="sp"></div>
+    <span class="mut small" id="fileCount">{{ files|length }} 份</span></div>
+  <div class="card-b tight">
+    <div id="fileWrap">
+      {% include '_file_table.html' %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block js %}
+<script>
+var BID = {{ b.id }};
+var stopPoll = null;
+
+document.addEventListener('DOMContentLoaded', function () {
+  var drop = document.getElementById('drop');
+  var input = document.getElementById('fileInput');
+  drop.onclick = function () { input.click(); };
+  input.onchange = function () { if (input.files.length) doUpload(input.files); };
+  ['dragenter', 'dragover'].forEach(function (e) {
+    drop.addEventListener(e, function (ev) { ev.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (e) {
+    drop.addEventListener(e, function (ev) { ev.preventDefault(); drop.classList.remove('over'); });
+  });
+  drop.addEventListener('drop', function (ev) {
+    if (ev.dataTransfer.files.length) doUpload(ev.dataTransfer.files);
+  });
+  resumeTasks();
+});
+
+function doUpload(files) {
+  var bar = document.getElementById('upBar');
+  var prog = document.getElementById('upProg');
+  var msg = document.getElementById('upMsg');
+  bar.classList.remove('hide');
+  prog.querySelector('i').style.width = '0%';
+  msg.textContent = '正在上传 ' + files.length + ' 个文件…';
+
+  wbUpload('/api/batches/' + BID + '/files', files, function (p) {
+    prog.querySelector('i').style.width = (p * 100).toFixed(0) + '%';
+  }).then(function (j) {
+    prog.querySelector('i').style.width = '100%';
+    if (!j.ok) { wbToast(j.error || '上传失败', 'bad'); return; }
+    var html = '';
+    if (j.uploaded.length) {
+      html += '<div class="note ok mb12">成功导入 ' + j.uploaded.length + ' 份：' +
+        j.uploaded.map(function (x) {
+          return x.student + '(条' + x.items + '/图' + x.images + ')';
+        }).join('、') + '</div>';
+    }
+    if (j.skipped.length) {
+      html += '<div class="note warn mb12">跳过 ' + j.skipped.length + ' 份：' +
+        j.skipped.map(function (x) { return x.name + '（' + x.reason + '）'; }).join('、') + '</div>';
+    }
+    if (j.errors.length) {
+      html += '<div class="note bad mb12">失败 ' + j.errors.length + ' 份：' +
+        j.errors.map(function (x) { return x.name + '：' + x.error; }).join('<br>') + '</div>';
+    }
+    document.getElementById('upResult').innerHTML = html;
+    msg.textContent = '上传完成';
+    wbToast('已导入 ' + j.uploaded.length + ' 份材料', 'ok');
+    setTimeout(function () { location.reload(); }, 1100);
+  });
+}
+
+function runBatch(kind) {
+  kind = kind || 'full';
+  wbApi('/api/batches/' + BID + '/run', { method: 'POST', body: { kind: kind } })
+    .then(function (j) {
+      if (!j.ok) { wbToast(j.error || '启动失败', kind === 'full' ? 'bad' : 'warn'); return; }
+      wbToast('任务已开始', 'ok');
+      watch(j.task_id);
+    });
+}
+
+function watch(tid) {
+  document.getElementById('taskPanel').classList.remove('hide');
+  document.getElementById('runIdle').classList.add('hide');
+  if (stopPoll) stopPoll();
+  stopPoll = wbPoll(tid, function (t) {
+    var bar = document.getElementById('tkBar');
+    bar.classList.toggle('done', t.status === 'done');
+    bar.classList.toggle('fail', t.status === 'failed');
+    bar.querySelector('i').style.width = (t.percent || 0) + '%';
+    document.getElementById('tkKind').textContent =
+      { read_images: '读图 + 出结论', analyze: '配对出结论', export: '导出 Word' }[t.kind] || t.kind;
+    document.getElementById('tkPhase').textContent = t.phase || '处理中';
+    document.getElementById('tkCount').textContent = t.total ? (t.done + ' / ' + t.total) : '';
+    document.getElementById('tkMsg').textContent = t.error || t.message || '';
+  }, function (t) {
+    if (t.status === 'done') {
+      wbToast('完成', 'ok');
+      if (t.kind === 'export') { showDownload(t.id); return; }
+      setTimeout(function () { location.reload(); }, 800);
+    } else if (t.status === 'failed') {
+      wbToast('任务失败：' + (t.error || ''), 'bad', 6000);
+    }
+  });
+}
+
+function doExport() {
+  wbApi('/api/batches/' + BID + '/export', { method: 'POST' }).then(function (j) {
+    if (!j.ok) { wbToast(j.error || '导出失败', 'warn'); return; }
+    wbToast('正在导出 ' + j.n + ' 份材料…', 'ok');
+    watch(j.task_id);
+  });
+}
+
+function showDownload(tid) {
+  wbApi('/api/tasks/' + tid).then(function (j) {
+    if (!j.ok) return;
+    var t = j.task;
+    document.getElementById('expDone').innerHTML =
+      '<div class="note ok">已导出 ' + (t.message || '') +
+      ' <a class="btn sm pri" style="margin-left:8px" href="/api/exports/' + tid +
+      '/download">下载 zip</a></div>';
+    wbToast('导出完成，可下载', 'ok');
+  });
+}
+
+function resumeTasks() {
+  wbApi('/api/batches/' + BID + '/tasks').then(function (j) {
+    if (!j.ok) return;
+    var running = j.tasks.filter(function (t) { return t.status === 'running' || t.status === 'queued'; })[0];
+    if (running) { watch(running.id); return; }
+    var last = j.tasks[0];
+    if (last && last.status === 'failed') {
+      document.getElementById('taskPanel').classList.remove('hide');
+      document.getElementById('runIdle').classList.add('hide');
+      document.getElementById('tkBar').classList.add('fail');
+      document.getElementById('tkPhase').textContent = '上次任务失败';
+      document.getElementById('tkMsg').textContent = last.error || '';
+    }
+  });
+}
+
+function delFile(fid, name) {
+  if (!confirm('确定删除「' + name + '」？该操作不可撤销。')) return;
+  wbApi('/api/files/' + fid, { method: 'DELETE' }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已删除', 'ok');
+    setTimeout(function () { location.reload(); }, 500);
+  });
+}
+
+function reanalyze(fid) {
+  wbApi('/api/files/' + fid + '/reanalyze', { method: 'POST' }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已加入队列，稍后刷新', 'ok');
+  });
+}
+</script>
+{% endblock %}

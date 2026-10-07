@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}批次管理 · {{ app_name }}{% endblock %}
+{% block crumb %}<a href="{{ url_for('main.dashboard') }}">总览</a> / <b>批次管理</b>{% endblock %}
+
+{% block body %}
+<div class="grid g2">
+  <div class="card" style="align-self:start">
+    <div class="card-h"><h2>新建批次</h2></div>
+    <div class="card-b">
+      <form method="post" action="{{ url_for('main.create_batch') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf() }}">
+        <label class="fld">
+          <span>奖学金项目</span>
+          <select name="program_id" required>
+            <option value="">— 请选择 —</option>
+            {% for pr in programs %}
+            <option value="{{ pr.id }}">{{ pr.name }}（{{ pr.category }}）</option>
+            {% endfor %}
+          </select>
+          <span class="hint">决定这批材料按哪套板块与阈值审核</span></label>
+        <label class="fld">
+          <span>批次名称</span>
+          <input type="text" name="name" placeholder="如：2024-2025学年 国家奖学金 第一批"
+                 value="{{ now[:4] }}学年国家奖学金申报" required>
+        </label>
+        <label class="fld">
+          <span>备注（可选）</span>
+          <textarea name="note" rows="3" placeholder="如：负责班级、截止日期、注意事项"></textarea>
+        </label>
+        <button class="btn pri" type="submit">创建并进入</button>
+      </form>
+      <div class="note mt12">
+        批次把同一轮要审核的材料放在一起，并**绑定到一个奖学金项目**——
+        不同奖学金的板块口径与阈值不同，所以必须选。上传的 docx 会立刻解析出
+        学生姓名、奖项条目数、图片数，随后一键运行即可出结论。
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><h2>全部批次</h2><div class="sp"></div>
+      <span class="mut small">{{ batches|length }} 个</span></div>
+    <div class="card-b tight">
+      {% if batches %}
+      <table class="tb">
+        <thead><tr><th>批次</th><th style="width:150px">奖学金项目</th>
+          <th class="num">材料</th><th class="num">已分析</th>
+          <th class="num">条目</th><th>状态</th><th></th></tr></thead>
+        <tbody>
+        {% for b in batches %}
+          <tr>
+            <td>
+              <div style="font-weight:500">{{ b.name }}</div>
+              <div class="mut small">{{ b.note or '' }}{% if b.note %} · {% endif %}{{ b.created_at | dt }}</div>
+            </td>
+            <td>{% if b.program_name %}<span class="chip c-acc">{{ b.program_name }}</span>
+                {% else %}<span class="chip c-warn">未绑定项目</span>{% endif %}</td>
+            <td class="num">{{ b.files }}</td>
+            <td class="num">{{ b.analyzed }}</td>
+            <td class="num">{{ b.n_items }}</td>
+            <td>
+              {% if b.files and b.analyzed == b.files %}<span class="chip c-ok">已完成</span>
+              {% elif b.analyzed %}<span class="chip c-warn">部分完成</span>
+              {% elif b.files %}<span class="chip c-blue">已上传</span>
+              {% else %}<span class="chip c-muted">空</span>{% endif %}
+            </td>
+            <td class="tar"><a class="btn xs" href="{{ url_for('main.batch_detail', bid=b.id) }}">进入</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty"><div class="ic">📦</div><div>还没有批次，先在左边建一个</div></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

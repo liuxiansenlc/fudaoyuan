@@ -1,0 +1,49 @@
+{% if files %}
+<table class="tb">
+  <thead>
+    <tr>
+      <th style="width:92px">学生</th>
+      <th>文件</th>
+      <th class="num" style="width:64px">条目</th>
+      <th class="num" style="width:64px">图片</th>
+      <th style="width:110px">状态</th>
+      <th style="width:180px"></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for f in files %}
+    <tr>
+      <td><b>{{ f.student_name or '—' }}</b></td>
+      <td>
+        <div class="small">{{ f.orig_name }}</div>
+        <div class="mut small">
+          {{ (f.size / 1024) | round(0) | int }} KB
+          {% if f.analyzed_at %} · 分析于 {{ f.analyzed_at | dt }}{% endif %}
+        </div>
+      </td>
+      <td class="num">{{ f.n_items }}</td>
+      <td class="num">{{ f.n_images }}</td>
+      <td>
+        {% if f.status == 'analyzed' %}<span class="chip c-ok">已出结论</span>
+        {% elif f.status == 'uploaded' or f.status == 'parsed' %}<span class="chip c-muted">待运行</span>
+        {% elif f.status == 'parse_failed' %}<span class="chip c-bad" title="{{ f.error }}">解析失败</span>
+        {% elif f.status == 'analyze_failed' %}<span class="chip c-bad" title="{{ f.error }}">配对失败</span>
+        {% else %}<span class="chip c-muted">{{ f.status }}</span>{% endif %}
+      </td>
+      <td class="tar nowrap">
+        {% if f.status == 'analyzed' %}
+        <a class="btn xs" href="{{ url_for('review.detail', fid=f.id) }}">查看结论</a>
+        {% endif %}
+        <button class="btn xs ghost" onclick="reanalyze({{ f.id }})">重新出结论</button>
+        <button class="btn xs danger" onclick="delFile({{ f.id }}, '{{ f.orig_name }}')">删除</button>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">
+  <div class="ic">📄</div>
+  <div>还没有材料，拖入 .docx 即可</div>
+</div>
+{% endif %}

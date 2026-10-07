@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}参考数据 · {{ app_name }}{% endblock %}
+{% block crumb %}<a href="{{ url_for('main.dashboard') }}">总览</a> / <b>参考数据</b>{% endblock %}
+
+{% block body %}
+<div class="note acc mb12">
+  参考数据用于两件事：<b>A 类竞赛表</b>用来核实竞赛是否属于 A 类、并把学生写的简称
+  归一到标准名；<b>成绩排名表</b>用来按学号核实绩点、排名与不及格情况。
+  没有它们系统仍能跑，但配对与资格核验会打折扣。
+</div>
+
+<div class="grid g4 mb12">
+  <div class="stat accent"><div class="k">A 类竞赛条目</div>
+    <div class="v">{{ meta.competition_n }}</div>
+    <div class="s">{{ meta.competition_file or '未配置' }}</div></div>
+  <div class="stat accent"><div class="k">成绩表学号记录</div>
+    <div class="v">{{ meta.ranking_n }}</div>
+    <div class="s">{{ meta.ranking_dir or '未配置' }}</div></div>
+</div>
+
+<div class="grid g2">
+  {% for kind, title, desc, accept in [
+      ('competition', 'A 类竞赛申报汇总表', '支持 .xls / .xlsx / .csv；可上传多份，系统合并去重', '.xls,.xlsx,.csv'),
+      ('ranking', '学生成绩排名表', '支持 .xls / .xlsx；可上传多个班级表，系统按学号合并', '.xls,.xlsx,.csv')] %}
+  <div class="card" style="align-self:start">
+    <div class="card-h"><h2>{{ title }}</h2></div>
+    <div class="card-b">
+      <p class="lead">{{ desc }}</p>
+      <div class="drop" id="drop-{{ kind }}">
+        <b>点击选择或拖入文件</b>
+        <span class="small">{{ accept }}</span>
+        <input type="file" multiple accept="{{ accept }}" class="hide" id="in-{{ kind }}">
+      </div>
+      <div class="prog mt12 hide" id="p-{{ kind }}"><i></i></div>
+      <div class="mt12">
+        {% set rows_k = rows | selectattr('kind', 'equalto', kind) | list %}
+        {% if rows_k %}
+        <table class="tb">
+          <thead><tr><th>已上传文件</th><th class="num" style="width:88px">大小</th><th style="width:70px"></th></tr></thead>
+          <tbody>
+          {% for r in rows_k %}
+            <tr>
+              <td>
+                <div class="small">{{ r.name }}</div>
+                <div class="mut small">{{ r.created_at | dt }}</div>
+              </td>
+              <td class="num mut small">{{ (r.size / 1024) | round(0) | int }} KB</td>
+              <td class="tar"><button class="btn xs danger" onclick="delRef({{ r.id }}, '{{ r.name }}')">删除</button></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="mut small">还没有上传</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="card mt12">
+  <div class="card-h"><h2>当前生效的参考数据</h2><div class="sp"></div>
+    <button class="btn sm ghost" onclick="reloadMeta()">重新读取</button></div>
+  <div class="card-b">
+    <div id="metaBox" class="small">
+      <div class="note {{ 'bad' if meta.competition_note else 'ok' }}">
+        A 类竞赛表：{{ meta.competition_note or ('已加载 ' ~ meta.competition_n ~ ' 条') }}
+      </div>
+      <div class="note {{ 'bad' if meta.ranking_note else 'ok' }} mt6">
+        成绩排名表：{{ meta.ranking_note or ('已加载 ' ~ meta.ranking_n ~ ' 条学号记录') }}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+['competition', 'ranking'].forEach(function (kind) {
+  var drop = document.getElementById('drop-' + kind);
+  var input = document.getElementById('in-' + kind);
+  drop.onclick = function () { input.click(); };
+  input.onchange = function () { if (input.files.length) up(kind, input.files); };
+  ['dragenter', 'dragover'].forEach(function (e) {
+    drop.addEventListener(e, function (ev) { ev.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (e) {
+    drop.addEventListener(e, function (ev) { ev.preventDefault(); drop.classList.remove('over'); });
+  });
+  drop.addEventListener('drop', function (ev) {
+    if (ev.dataTransfer.files.length) up(kind, ev.dataTransfer.files);
+  });
+});
+
+function up(kind, files) {
+  var p = document.getElementById('p-' + kind);
+  p.classList.remove('hide');
+  p.querySelector('i').style.width = '0%';
+  wbUpload('/api/refdata/' + kind, files, function (x) {
+    p.querySelector('i').style.width = (x * 100).toFixed(0) + '%';
+  }).then(function (j) {
+    if (!j.ok) { wbToast(j.error || '上传失败', 'bad'); p.classList.add('hide'); return; }
+    p.querySelector('i').style.width = '100%';
+    wbToast('已上传 ' + j.saved.length + ' 个文件', 'ok');
+    setTimeout(function () { location.reload(); }, 700);
+  });
+}
+
+function delRef(id, name) {
+  if (!confirm('删除「' + name + '」？')) return;
+  wbApi('/api/refdata/' + id, { method: 'DELETE' }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已删除', 'ok');
+    setTimeout(function () { location.reload(); }, 500);
+  });
+}
+
+function reloadMeta() {
+  wbApi('/api/refdata/preview').then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    var m = j.meta;
+    document.getElementById('metaBox').innerHTML =
+      '<div class="note ' + (m.competition_note ? 'bad' : 'ok') + '">A 类竞赛表：' +
+      (m.competition_note || ('已加载 ' + m.competition_n + ' 条')) + '</div>' +
+      '<div class="note ' + (m.ranking_note ? 'bad' : 'ok') + ' mt6">成绩排名表：' +
+      (m.ranking_note || ('已加载 ' + m.ranking_n + ' 条学号记录')) + '</div>';
+    wbToast('已重新读取', 'ok');
+  });
+}
+</script>
+{% endblock %}

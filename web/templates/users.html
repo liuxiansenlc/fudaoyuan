@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}用户管理 · {{ app_name }}{% endblock %}
+{% block crumb %}<a href="{{ url_for('main.dashboard') }}">总览</a> / <b>用户管理</b>{% endblock %}
+
+{% block body %}
+<div class="note warn mb12">
+  系统不开放自助注册，账号由管理员创建。首次启动会自动建一个 <b>admin</b> 账号，
+  默认密码 <b>admin123</b> —— 请登录后立刻改掉。
+</div>
+
+<div class="grid g2">
+  <div class="card" style="align-self:start">
+    <div class="card-h"><h2>新建用户</h2></div>
+    <div class="card-b">
+      <label class="fld"><span>用户名</span><input type="text" id="uName" placeholder="如：fudaoyuan01"></label>
+      <label class="fld"><span>显示名</span><input type="text" id="uDisp" placeholder="如：张老师"></label>
+      <label class="fld"><span>初始密码</span><input type="text" id="uPwd" placeholder="至少 6 位"></label>
+      <label class="flex mb12" style="gap:7px;cursor:pointer">
+        <input type="checkbox" id="uAdmin"><span class="small">管理员（可改规则、配模型、建号）</span></label>
+      <button class="btn pri" onclick="createUser()">创建</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><h2>用户列表</h2><div class="sp"></div>
+      <span class="mut small">{{ users | length }} 个</span></div>
+    <div class="card-b tight">
+      <table class="tb">
+        <thead><tr><th>用户</th><th style="width:80px">角色</th><th style="width:80px">状态</th>
+          <th style="width:190px"></th></tr></thead>
+        <tbody>
+        {% for u in users %}
+          <tr>
+            <td>
+              <div style="font-weight:500">{{ u.display_name or u.username }}</div>
+              <div class="mut small mono">{{ u.username }} · {{ u.created_at | dt('%Y-%m-%d') }}</div>
+            </td>
+            <td>{% if u.is_admin %}<span class="chip c-acc">管理员</span>
+                {% else %}<span class="chip c-muted">审核员</span>{% endif %}</td>
+            <td>{% if u.is_active %}<span class="chip c-ok">正常</span>
+                {% else %}<span class="chip c-bad">已停用</span>{% endif %}</td>
+            <td class="tar nowrap">
+              <button class="btn xs ghost" onclick="resetPwd({{ u.id }})">重置密码</button>
+              {% if u.id != cu.id %}
+              <button class="btn xs {{ 'danger' if u.is_active else '' }}" onclick="toggleUser({{ u.id }})">
+                {{ '停用' if u.is_active else '启用' }}</button>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+function createUser() {
+  var body = {
+    action: 'create',
+    username: document.getElementById('uName').value.trim(),
+    display_name: document.getElementById('uDisp').value.trim(),
+    password: document.getElementById('uPwd').value,
+    is_admin: document.getElementById('uAdmin').checked
+  };
+  wbApi('/api/users', { method: 'POST', body: body }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已创建', 'ok');
+    setTimeout(function () { location.reload(); }, 500);
+  });
+}
+function toggleUser(id) {
+  wbApi('/api/users', { method: 'POST', body: { action: 'toggle', id: id } }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已更新', 'ok');
+    setTimeout(function () { location.reload(); }, 450);
+  });
+}
+function resetPwd(id) {
+  var p = prompt('输入新密码（至少 6 位）：');
+  if (!p) return;
+  wbApi('/api/users', { method: 'POST', body: { action: 'reset_pwd', id: id, password: p } })
+    .then(function (j) {
+      if (!j.ok) { wbToast(j.error, 'bad'); return; }
+      wbToast('密码已重置', 'ok');
+    });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,48 @@
+# ================= 运行期数据（绝不入库）=================
+# data/ 含：app.db（用户/密钥密文/学生数据）、instance/secret.key（会话密钥）、
+# uploads/（学生原始材料，含身份证号）、exports/、results/、images/、logs/
+data/
+
+# 读图缓存（视觉模型 + OCR 的 sha256 缓存）
+cache/
+
+# 脚本版输出产物（out/result.json、审核工作台.html、导出的图片等）
+out/
+
+# ================= 密钥与本地配置 =================
+.env
+*.local
+*.key
+!*.key.example
+
+# ================= Python =================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+
+# ================= 编辑器 / 系统 =================
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ================= 临时 / 调试 =================
+*.log
+*.tmp
+*.bak
+tests/.pytest_cache/
+.pytest_cache/
+.mypy_cache/

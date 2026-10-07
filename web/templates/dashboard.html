@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}总览 · {{ app_name }}{% endblock %}
+{% block crumb %}总览{% endblock %}
+
+{% block tools %}
+<a class="btn pri sm" href="{{ url_for('main.batches') }}">批次管理</a>
+{% endblock %}
+
+{% block body %}
+
+{% set total_items = st.auto + st.need + st.miss %}
+{% set rate = (100 * st.auto / total_items) | round(0) | int if total_items else 0 %}
+
+<div class="grid g4 mb12">
+  <div class="stat accent">
+    <div class="k">已分析学生</div>
+    <div class="v">{{ st.students }}</div>
+    <div class="s">共上传 {{ st.files }} 份材料</div>
+    <div class="bar"><i style="width:{{ (100*st.analyzed/st.files)|round(0)|int if st.files else 0 }}%"></i></div>
+  </div>
+  <div class="stat ok">
+    <div class="k"><span class="dot ok"></span>系统直接给结论</div>
+    <div class="v">{{ st.auto }}</div>
+    <div class="s">占 {{ rate }}% · 绿/蓝/人工已确认</div>
+    <div class="bar"><i style="width:{{ rate }}%;background:var(--ok)"></i></div>
+  </div>
+  <div class="stat warn">
+    <div class="k"><span class="dot warn"></span>需人工判断</div>
+    <div class="v">{{ st.need }}</div>
+    <div class="s">带反证或附件疑似</div>
+  </div>
+  <div class="stat bad">
+    <div class="k"><span class="dot bad"></span>缺图 / 姓名异常</div>
+    <div class="v">{{ st.miss }}</div>
+    <div class="s">没有任何图片达到门槛</div>
+  </div>
+</div>
+
+<div class="grid g2">
+  <div class="card">
+    <div class="card-h">
+      <h2>最近批次</h2><div class="sp"></div>
+      <a class="btn sm ghost" href="{{ url_for('main.batches') }}">全部 →</a>
+    </div>
+    <div class="card-b tight">
+      {% if batches %}
+      <table class="tb">
+        <thead><tr><th>批次</th><th style="width:140px">奖学金项目</th>
+          <th class="num">材料</th><th class="num">已分析</th><th>状态</th><th></th></tr></thead>
+        <tbody>
+        {% for b in batches %}
+          <tr>
+            <td>
+              <div style="font-weight:500">{{ b.name }}</div>
+              <div class="mut small">{{ b.created_at | dt }}</div>
+            </td>
+            <td>{% if b.program_name %}<span class="chip c-acc">{{ b.program_name }}</span>
+                {% else %}<span class="mut small">—</span>{% endif %}</td>
+            <td class="num">{{ b.files }}</td>
+            <td class="num">{{ b.analyzed }}</td>
+            <td>
+              {% if b.files and b.analyzed == b.files %}<span class="chip c-ok">已完成</span>
+              {% elif b.analyzed %}<span class="chip c-warn">部分完成</span>
+              {% else %}<span class="chip c-muted">待运行</span>{% endif %}
+            </td>
+            <td class="tar"><a class="btn xs" href="{{ url_for('main.batch_detail', bid=b.id) }}">进入</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty">
+        <div class="ic">📁</div>
+        <div>还没有批次</div>
+        <a class="btn pri sm mt12" href="{{ url_for('main.batches') }}">新建一个批次</a>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><h2>系统状态</h2></div>
+    <div class="card-b">
+      <div class="flex" style="justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line2)">
+        <span class="mut2">读图缓存（按 sha256 去重）</span><b>{{ cache_n }} 张</b>
+      </div>
+      <div class="flex" style="justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line2)">
+        <span class="mut2">今日模型调用</span><b>{{ usage_calls }} 次 / {{ usage_images }} 张图</b>
+      </div>
+      <div class="flex" style="justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line2)">
+        <span class="mut2">已识别图片总数</span><b>{{ st.imgs }}</b>
+      </div>
+      <div class="flex" style="justify-content:space-between;padding:8px 0">
+        <span class="mut2">奖项条目总数</span><b>{{ st.n_items }}</b>
+      </div>
+      <div class="note mt12">
+        系统每条结论都能追溯到证据：命中了哪些、被什么扣分（反证）、
+        这张图识别出的奖项名 / 等级 / 年份 / 落款级别。有反证的条目会明确标为「待确认」。
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if recent %}
+<div class="card mt12">
+  <div class="card-h"><h2>最近上传</h2></div>
+  <div class="card-b tight">
+    <table class="tb">
+      <thead><tr><th>学生</th><th>文件</th><th class="num">条目</th><th class="num">图片</th><th>状态</th><th></th></tr></thead>
+      <tbody>
+      {% for f in recent %}
+        <tr>
+          <td><b>{{ f.student_name or '—' }}</b></td>
+          <td class="mut small">{{ f.orig_name }}</td>
+          <td class="num">{{ f.n_items }}</td>
+          <td class="num">{{ f.n_images }}</td>
+          <td>
+            {% if f.status == 'analyzed' %}<span class="chip c-ok">已出结论</span>
+            {% elif f.status == 'parse_failed' or f.status == 'analyze_failed' %}<span class="chip c-bad" title="{{ f.error }}">失败</span>
+            {% else %}<span class="chip c-muted">待运行</span>{% endif %}
+          </td>
+          <td class="tar">
+            {% if f.status == 'analyzed' %}
+            <a class="btn xs" href="{{ url_for('review.detail', fid=f.id) }}">查看</a>
+            {% else %}
+            <a class="btn xs" href="{{ url_for('main.batch_detail', bid=f.batch_id) }}">去运行</a>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

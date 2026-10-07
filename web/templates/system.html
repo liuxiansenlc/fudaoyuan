@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}系统信息 · {{ app_name }}{% endblock %}
+{% block crumb %}<a href="{{ url_for('main.dashboard') }}">总览</a> / <b>系统信息</b>{% endblock %}
+
+{% block body %}
+<div class="grid g4 mb12">
+  <div class="stat accent"><div class="k">读图缓存</div><div class="v">{{ n_cache }}</div>
+    <div class="s">按 sha256 去重，跨批次复用</div></div>
+  <div class="stat"><div class="k">今日读图</div><div class="v">{{ usage_today_images }}</div>
+    <div class="s">上限 {{ daily_limit }} 张/天</div></div>
+  <div class="stat"><div class="k">今日调用</div><div class="v">{{ usage_today_calls }}</div>
+    <div class="s">次</div></div>
+  <div class="stat"><div class="k">任务执行方式</div>
+    <div class="v" style="font-size:17px">{{ '进程内' if inline else '独立 worker' }}</div>
+    <div class="s mono">{{ worker }}</div></div>
+</div>
+
+<div class="grid g2">
+  <div class="card">
+    <div class="card-h"><h2>模型用量（近 14 天）</h2></div>
+    <div class="card-b tight">
+      {% if usage %}
+      <table class="tb">
+        <thead><tr><th>日期</th><th>模型</th><th class="num">调用</th><th class="num">读图</th></tr></thead>
+        <tbody>
+        {% for u in usage %}
+          <tr><td>{{ u.day }}</td><td class="mono small">{{ u.model or '—' }}</td>
+            <td class="num">{{ u.calls }}</td><td class="num">{{ u.images }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="empty"><div>暂无用量记录</div></div>{% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><h2>操作日志</h2></div>
+    <div class="card-b tight">
+      {% if logs %}
+      <table class="tb">
+        <thead><tr><th style="width:130px">时间</th><th>动作</th><th>说明</th></tr></thead>
+        <tbody>
+        {% for l in logs %}
+          <tr>
+            <td class="mut small nowrap">{{ l.at | dt }}</td>
+            <td class="mono small">{{ l.action }}</td>
+            <td class="small">{{ l.detail or l.target or '' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="empty"><div>暂无日志</div></div>{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card mt12">
+  <div class="card-h"><h2>部署要点（宝塔 / Linux）</h2></div>
+  <div class="card-b">
+    <pre class="mono" style="white-space:pre-wrap;line-height:1.85;margin:0;color:var(--tx2)">1) 装依赖
+     cd 奖学金审核工作台 && pip install -r requirements.txt
+
+2) Web 进程（gunicorn，宝塔「Python 项目管理器」里加）
+     gunicorn -w 3 -b 127.0.0.1:8000 wsgi:app
+
+3) 读图 worker（独立进程，宝塔「守护进程」里加）
+     WB_INLINE_WORKER=0 python worker.py
+
+   ★ 生产环境务必把 Web 进程的 WB_INLINE_WORKER 设为 0，
+     否则 gunicorn 重启会打断正在跑的读图任务。
+
+4) nginx 反代
+     client_max_body_size 200m;
+     location / { proxy_pass http://127.0.0.1:8000; proxy_set_header Host $host; }
+
+5) 上传的图片与结果都在 data/ 下，备份这个目录即可</pre>
+  </div>
+</div>
+{% endblock %}

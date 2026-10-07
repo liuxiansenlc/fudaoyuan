@@ -1,0 +1,538 @@
+{% extends "base.html" %}
+{% set wide = true %}
+{% block title %}{{ v.student.name or '学生' }} · 审核{% endblock %}
+{% block crumb %}
+  <a href="{{ url_for('review.index') }}">审核结论</a> /
+  <a href="{{ url_for('main.batch_detail', bid=batch.id) }}">{{ batch.name }}</a> /
+  <b>{{ v.student.name or '学生' }}</b>
+  {% if program %}· <span class="chip c-acc">{{ program.name }}</span>{% endif %}
+{% endblock %}
+
+{% macro mat_card(c, key) %}
+<div class="mc" data-jump="left" data-sha="{{ c.sha }}">
+  <img src="{{ c.url }}" loading="lazy" onclick="zoom(this)" alt="{{ c.summary }}">
+
+  {% if c.suggest_ok %}
+  <div class="sug">建议补写奖项名：{ {{ c.suggest_award }} }</div>
+  {% else %}
+  <div class="mt">{{ c.award_name or c.file }}</div>
+  {% endif %}
+
+  {% if c.metrics_text %}<div class="mv">{{ c.metrics_text }}</div>{% endif %}
+  <div class="ms">{{ c.kind_label }}{% if c.size %} · {{ c.size }}{% endif %}</div>
+  {% if c.year %}<div class="ms">年份：{{ c.year }}</div>
+  {% else %}<span class="chip c-warn" style="font-size:10px">年份不明确</span>{% endif %}
+  {% for kind, text in c.tags %}
+    <span class="chip c-{{ kind }}" style="font-size:10px;margin-top:3px">{{ text }}</span>
+  {% endfor %}
+
+  {% if c.ai_judgment %}<div class="ms ai mt6">AI 判断：{{ c.ai_judgment }}</div>{% endif %}
+  {% if c.nearest and c.nearest.item %}
+    {% if (c.nearest.score or 0) >= 40 %}
+    <div class="ms">最接近的条目：「…{{ c.nearest.item[-34:] }}」（{{ c.nearest.score | round(0) | int }} 分）
+      —— 若确认是该条证明，请人工指定归属</div>
+    {% else %}
+    <div class="ms">没有可挂靠的已写条目（最高 {{ c.nearest.score | round(0) | int }} 分）
+      —— 如需计入，请在此采纳为一条奖项</div>
+    {% endif %}
+  {% endif %}
+
+  <div class="flex mt6" style="gap:5px">
+    <button class="btn xs pri"
+            onclick="openAdopt('{{ c.sha }}','{{ (c.suggest_award or c.award_name or '') | e }}','{{ key }}')">
+      采纳为条目</button>
+  </div>
+  {% if c.note %}
+  <details class="acc"><summary></summary><div class="det">{{ c.note }}</div></details>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% block body %}
+<div class="rev">
+
+  {# ============================ 左侧：同批次学生 ============================ #}
+  <aside class="side2">
+    <div class="card">
+      <div class="card-h" style="padding:11px 13px"><h3 style="margin:0">同批次学生</h3></div>
+      <div class="card-b" style="padding:7px">
+        {% for p in peers %}
+        <a class="peer {{ 'on' if p.id == f.id }}"
+           href="{{ url_for('review.detail', fid=p.id) if p.status == 'analyzed' else '#' }}">
+          <span class="dot {{ 'ok' if p.status=='analyzed' else 'muted' }}"></span>
+          <span>{{ p.student_name or '未命名' }}</span>
+          <span class="sp"></span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </aside>
+
+  {# ============================ 右侧：审核主体 ============================ #}
+  <div class="body">
+
+    {# ---------- 头部统计（点一下就能跳到对应项） ---------- #}
+    <div class="card">
+      <div class="card-b">
+        <div class="flex wrap" style="gap:14px">
+          <div>
+            <h1 style="margin-bottom:2px">{{ v.student.name or '未识别姓名' }}</h1>
+            <div class="mut small">
+              {{ f.orig_name }}
+              {% if v.student.class_no %} · {{ v.student.class_no }}{% endif %}
+              {% if v.student.sid %} · 学号 {{ v.student.sid }}{% endif %}
+            </div>
+          </div>
+          <div class="sp"></div>
+          <div class="flex wrap" style="gap:7px">
+            <span class="chip c-ok jump" onclick="jumpTo('auto')"
+                  title="点击跳到已确定的第一条（再点跳到下一条）">直接给结论 {{ v.stats.auto }}</span>
+            <span class="chip c-warn jump {{ 'hot' if v.stats.need }}" onclick="jumpTo('need')"
+                  title="点击跳到需要你判断的条目">需判断 {{ v.stats.need }}</span>
+            <span class="chip c-bad jump {{ 'hot' if v.stats.miss }}" onclick="jumpTo('miss')"
+                  title="点击跳到缺图/姓名异常的条目">缺图 {{ v.stats.miss }}</span>
+            {% if v.stats.declared %}
+            <span class="chip c-muted jump" onclick="jumpTo('declared')">声明无材料 {{ v.stats.declared }}</span>
+            {% endif %}
+            {% if v.stats.rejected %}
+            <span class="chip c-bad jump" onclick="jumpTo('rej')"
+                  title="人工否定的条目：不写入导出材料（可改回）">人工否定 {{ v.stats.rejected }}</span>
+            {% endif %}
+            {% if v.stats.left %}
+            <span class="chip c-acc jump {{ 'hot' if v.stats.left }}" onclick="jumpTo('left')"
+                  title="点击跳到未认领的图片">未认领图 {{ v.stats.left }}</span>
+            {% endif %}
+            {% if v.stats.adopted %}
+            <span class="chip c-ok jump" onclick="jumpTo('adopted')"
+                  title="点击跳到人工采纳的条目">人工采纳 {{ v.stats.adopted }}</span>
+            {% endif %}
+          </div>
+
+          {% if cu.is_admin %}
+          <label class="flex" style="gap:6px;flex:none"
+                 title="人工否定的条目，导出 Word 时如何处理。这里改的是当前奖学金项目的设置">
+            <span class="mut small">否定项</span>
+            <select id="rejMode" onchange="saveRejMode(this.value)" style="width:auto">
+              {% for m, lab in reject_modes %}
+              <option value="{{ m }}" {{ 'selected' if v.reject_mode == m }}>{{ lab }}</option>
+              {% endfor %}
+            </select>
+            <span class="mut small">（{{ reject_mode_src }}）</span>
+          </label>
+          {% endif %}
+
+          <button class="btn sm" id="expBtn" onclick="exportOne()" title="按模板板块重排为「奖项名 → 紧跟证明图」">导出 Word</button>
+        </div>
+
+        <div class="flex wrap mt12" style="gap:18px">
+          <div style="flex:1;min-width:220px">
+            <div class="small mut2 mb6">系统自动判定覆盖率</div>
+            <div class="prog"><i style="width:{{ v.stats.rate }}%;background:var(--ok)"></i></div>
+            <div class="mut small mt6">{{ v.stats.rate }}% 的条目系统能直接给结论（{{ v.stats.auto }}/{{ v.stats.n_items }}）</div>
+          </div>
+          <div style="flex:1;min-width:220px">
+            <div class="small mut2 mb6">申报板块覆盖（缺项不影响其他板块）</div>
+            <div class="flex wrap" style="gap:5px">
+              {% for c in v.coverage %}
+              <span class="chip {{ 'c-ok' if c.has else 'c-muted' }}"
+                    title="{{ c.items }} 条 / {{ c.images }} 图">
+                {{ c.label }}{% if not c.has %} · 未提交{% endif %}
+              </span>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+
+        {# ---------- 资格核验 ---------- #}
+        {% set el = v.eligibility %}
+        {% if el and (el.identity or el['items']) %}
+        <div class="mt12" style="border-top:1px solid var(--line2);padding-top:12px">
+          <div class="flex wrap" style="gap:7px;align-items:flex-start">
+            <span class="small mut2" style="padding-top:2px;flex:none">资格核验</span>
+            <div class="flex wrap" style="gap:6px;flex:1">
+              {% for lv, msg in (el.identity or []) %}
+                <span class="chip c-{{ 'ok' if lv=='ok' else ('bad' if lv=='bad' else ('warn' if lv=='warn' else 'muted')) }}">{{ msg }}</span>
+              {% endfor %}
+              {% for lv, msg in (el['items'] or []) %}
+                <span class="chip c-{{ 'ok' if lv=='ok' else ('bad' if lv=='bad' else ('warn' if lv=='warn' else 'muted')) }}">{{ msg }}</span>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    {# ---------- 批量操作条 ---------- #}
+    <div class="card">
+      <div class="card-b" style="padding:11px 16px">
+        <div class="flex wrap">
+          <label class="flex" style="gap:6px;cursor:pointer">
+            <input type="checkbox" id="chkAll" onchange="toggleAll(this)">
+            <span class="small">全选待确认</span>
+          </label>
+          <span class="mut small" id="selCount">已选 0 条</span>
+          <div class="sp"></div>
+          <button class="btn sm ok" onclick="act('confirm')">确认所选</button>
+          <button class="btn sm danger" onclick="act('reject')">否定所选</button>
+          <button class="btn sm ghost" onclick="act('reset')">撤销人工判定</button>
+          {% if v.stats.need %}
+          <button class="btn sm pri" onclick="jumpTo('need')">跳到第 1 个待判断 ↘</button>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    {# ---------- 逐板块 ---------- #}
+    <div class="stu">
+      {% for sec in v.sections %}
+      <div class="sec" id="sec-{{ sec.key }}">
+        <span class="nm">{{ sec.label }}</span>
+        <span class="ln"></span>
+        <span class="ct">
+          {% if sec.n_rows %}{{ sec.n_rows }} 条条目 · {{ sec.n_auto }} 已定
+          {% else %}<span class="mut">无文字条目</span>{% endif %}
+          {% if sec.n_rejected %} · {{ sec.n_rejected }} 已否定{% endif %}
+          {% if sec.n_left %} · {{ sec.n_left }} 张待认领{% endif %}
+          {% if not sec.is_tpl %}<span class="chip c-muted" style="font-size:10px">方案外类目</span>{% endif %}
+        </span>
+      </div>
+
+      {% for r in sec.rows %}
+      <div class="row {{ 'is-rej' if r.status == 'rejected' else '' }}"
+           data-iid="{{ r.item_id if r.item_id is not none else '' }}"
+           data-jump="{{ r.jump | join(' ') }}" data-st="{{ r.status }}"
+           id="row-{{ r.item_id if r.item_id is not none else 'ad' ~ loop.index }}">
+        <div style="flex:none;padding-top:2px">
+          {% if r.item_id is not none %}
+          <input type="checkbox" class="pick" data-iid="{{ r.item_id }}"
+                 {% if r.status in ('amber','pending_weak','blue') %}data-attn="1"{% endif %}
+                 onchange="syncCount()">
+          {% else %}
+          <span class="mut small" title="人工采纳的条目，没有对应的学生原文">人</span>
+          {% endif %}
+        </div>
+        <div class="it">
+          <div class="t">
+            {{ r.item_text }}
+            <span class="chip c-{{ r.cls }}">{{ r.label }}</span>
+            {% if r.manual %}<span class="chip c-acc">人工</span>{% endif %}
+            {% if r.status == 'adopted' and not r.in_scheme %}
+            <span class="chip c-muted" title="这个类目不在该奖学金的申报板块里，仍会正常导出">方案外</span>
+            {% endif %}
+          </div>
+
+          {% if r.pos %}
+          <div class="why">✓ {{ r.pos | join('、') }}</div>
+          {% endif %}
+          {% if r.neg %}
+          <div class="why"><em class="neg">⚠ 反证：{{ r.neg | join('、') }}</em></div>
+          {% endif %}
+          {% if r.pending_reason and r.pending_reason not in (r.neg | join('、')) %}
+          <div class="why"><em class="ask">待确认原因：{{ r.pending_reason }}</em></div>
+          {% endif %}
+          {% if r.status == 'blue' %}
+          <div class="alt">系统改动了原文位置，务必核对是否确为该奖项的证明</div>
+          {% endif %}
+          {% if r.status == 'rejected' %}
+          <div class="why">
+            <em class="neg">已由辅导员否定，导出时
+              {{ '不写入材料' if v.reject_mode == 'remove' else '会保留但标注「不符合申报规范」' }}；可随时改回。</em>
+          </div>
+          {% endif %}
+          {% if r.status == 'adopted' %}
+          <div class="alt">由辅导员从未认领图片采纳而来，将作为一条奖项导出到「{{ sec.label }}」</div>
+          {% endif %}
+          {% if r.alternatives %}
+          <div class="alt">另有候选：{{ r.alternatives | join('、') }}</div>
+          {% endif %}
+          {% if r.rule_hits %}
+          <div class="why">
+            <span class="chip c-acc" style="font-size:10px">命中了自定义规则</span>
+            {% for h in r.rule_hits %}<div class="alt">{{ h }}</div>{% endfor %}
+          </div>
+          {% endif %}
+          {% if r.manual_note %}<div class="alt">人工备注：{{ r.manual_note }}</div>{% endif %}
+
+          {% if r.item_id is not none %}
+          <div class="flex wrap mt6" style="gap:5px">
+            {% if r.status == 'rejected' %}
+            <button class="btn xs ok" onclick="act('confirm', [{{ r.item_id }}])">改回通过</button>
+            <button class="btn xs ghost" onclick="act('reset', [{{ r.item_id }}])">恢复系统判定</button>
+            {% else %}
+            {% if r.img %}
+            <button class="btn xs ghost" onclick="act('confirm', [{{ r.item_id }}])">确认</button>
+            {% endif %}
+            <button class="btn xs ghost" onclick="act('reject', [{{ r.item_id }}])">否定</button>
+            <button class="btn xs ghost" onclick="pickReassign({{ r.item_id }})">改派</button>
+            {% if r.manual %}
+            <button class="btn xs ghost" onclick="act('reset', [{{ r.item_id }}])">撤销</button>
+            {% endif %}
+            {% endif %}
+          </div>
+          <div class="hide mt6" id="ra-{{ r.item_id }}">
+            <select class="ra-sel" data-iid="{{ r.item_id }}"></select>
+            <button class="btn xs pri mt6" onclick="doReassign({{ r.item_id }})">确认改派</button>
+          </div>
+          {% elif r.status == 'adopted' %}
+          <div class="flex wrap mt6" style="gap:5px">
+            <button class="btn xs ghost"
+                    onclick="openAdopt('{{ r.adopt_sha }}','{{ r.item_text | e }}','{{ r.adopt_section }}')">
+              修改名称/归属</button>
+            <button class="btn xs danger" onclick="unadopt('{{ r.adopt_sha }}')">撤销采纳</button>
+          </div>
+          {% endif %}
+        </div>
+
+        <div class="th">
+          {% if r.img %}
+          <div class="thumb {{ 'rej' if r.status == 'rejected' else '' }}">
+            <img src="{{ r.img.url }}" loading="lazy" onclick="zoom(this)"
+                 alt="{{ r.img.summary }}" title="{{ r.img.summary }}">
+            {% if r.status == 'rejected' %}<div class="badge">人工否定</div>{% endif %}
+            <div class="cap">{{ r.img.summary or r.img.file }}</div>
+          </div>
+          <details class="acc">
+            <summary></summary>
+            <div class="det">
+              <div class="kv"><i>类型</i><span>{{ r.img.kind_label }}{% if r.img.size %} · {{ r.img.size }}{% endif %}</span></div>
+              {% if r.img.issuer %}<div class="kv"><i>落款</i><span>{{ r.img.issuer }}</span></div>{% endif %}
+              {% if r.img.vlevel %}<div class="kv"><i>级别</i><span>{{ r.img.vlevel }}</span></div>{% endif %}
+              {% if r.img.persons %}<div class="kv"><i>人名</i><span>{{ r.img.persons | join('、') }}</span></div>{% endif %}
+              {% if r.img.metrics %}<div class="kv"><i>指标</i><span>{% for k,val in r.img.metrics.items() %}{{ k }}={{ val }}{% if not loop.last %}、{% endif %}{% endfor %}</span></div>{% endif %}
+              {% if r.img.note %}<div class="kv"><i>说明</i><span>{{ r.img.note }}</span></div>{% endif %}
+              {% if r.score is not none %}<div class="kv"><i>匹配度</i><span>{{ r.score | round(1) }} 分</span></div>{% endif %}
+            </div>
+          </details>
+          {% elif r.status == 'declared' %}
+          <div class="thumb"><div class="empty2">学生声明无材料</div></div>
+          {% elif r.status == 'rejected' %}
+          <div class="thumb"><div class="empty2">已否定 · 无配图</div></div>
+          {% else %}
+          <div class="thumb"><div class="empty2">缺图</div></div>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+
+      {% if sec.leftover_main %}
+      <div class="mats">
+        <div class="mh">
+          本板块有 {{ sec.n_left_main }} 张图片【未认领】到具体奖项 ——
+          学生在 Word 里插入图片通常意味着确有该奖项，请点「采纳为条目」把它放进
+          <b>{{ sec.label }}</b>；认领后的条目会以同样的板块顺序导出到 Word。
+        </div>
+        <div class="mg">
+          {% for c in sec.leftover_main %}{{ mat_card(c, sec.key) }}{% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if sec.leftover_self %}
+      <div class="mats">
+        <div class="mh self">
+          本板块为<strong>整块证明材料</strong>（{{ sec.label }} 这类本来就以截图形式提交，
+          不需要逐条文字条目）—— 共 {{ sec.n_left_self }} 张，系统已按内容归类，
+          年份或口径不明确的已标注。如需计入正文，可点「采纳为条目」。
+        </div>
+        <div class="mg">
+          {% for c in sec.leftover_self %}{{ mat_card(c, sec.key) }}{% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      {% endfor %}
+
+      {% if not v.sections %}
+      <div class="empty"><div class="ic">📭</div><div>这份材料里没有识别到条目或图片</div></div>
+      {% endif %}
+    </div>
+
+  </div>
+</div>
+
+{# ---------- 采纳弹窗 ---------- #}
+<div id="adopt" class="lb" style="background:rgba(0,0,0,.5);place-items:center">
+  <div class="card" style="max-width:460px;width:100%;background:var(--card)" onclick="event.stopPropagation()">
+    <div class="card-h"><h2 id="adTitle">采纳为一条奖项</h2></div>
+    <div class="card-b">
+      <label class="fld"><span>奖项名称</span>
+        <input type="text" id="adName"></label>
+      <label class="fld"><span>归入板块</span>
+        <select id="adSec">
+          <option value="">— 按图片识别结果自动归类 —</option>
+          {% for s in adopt_sections %}
+          <option value="{{ s.key }}" data-inscheme="{{ '1' if s.in_scheme else '0' }}">
+            {{ s.label }}{% if not s.in_scheme %}（方案外，导出时排在最后）{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+        <span class="hint">导出 Word 时会按这个板块归类；板块顺序与页面一致，不会丢失。</span></label>
+      <div class="flex">
+        <button class="btn pri" onclick="doAdopt()">确认</button>
+        <button class="btn ghost" onclick="closeAdopt()">取消</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ---------- 浮动：下一个待判断 ---------- #}
+{% if v.stats.need %}
+<button id="fab" class="btn pri" onclick="jumpTo('need')"
+        title="跳到下一个需要判断的条目">需判断 {{ v.stats.need }} · 下一个 ↓</button>
+{% endif %}
+{% endblock %}
+
+{% block js %}
+<script>
+var FID = {{ v.file_id }};
+var CAND = {{ v.cand_json | tojson }};
+var KIND_NAME = { auto: '直接给结论', need: '需判断', miss: '缺图', left: '未认领图',
+                  rejected: '人工否定', rej: '人工否定', declared: '声明无材料',
+                  adopted: '人工采纳', attn: '待处理' };
+
+function syncCount() {
+  var n = document.querySelectorAll('.pick:checked').length;
+  document.getElementById('selCount').textContent = '已选 ' + n + ' 条';
+}
+function toggleAll(cb) {
+  document.querySelectorAll('.pick').forEach(function (p) {
+    if (!cb.checked) { p.checked = false; return; }
+    if (p.dataset.attn === '1') p.checked = true;
+  });
+  syncCount();
+}
+function pickIds() {
+  return Array.prototype.map.call(document.querySelectorAll('.pick:checked'),
+    function (p) { return parseInt(p.dataset.iid, 10); });
+}
+function act(decision, ids) {
+  ids = ids || pickIds();
+  if (!ids.length) { wbToast('请先勾选条目', 'warn'); return; }
+  if (decision === 'reject' && ids.length > 1 && !confirm('确定否定所选 ' + ids.length + ' 条？')) return;
+  wbApi('/api/files/' + FID + '/actions', { method: 'POST', body: { decision: decision, items: ids } })
+    .then(function (j) {
+      if (!j.ok) { wbToast(j.error, 'bad'); return; }
+      wbToast('已' + ({ confirm: '确认', reject: '否定', reset: '撤销' }[decision]) + ' ' + j.n + ' 条', 'ok');
+      setTimeout(function () { location.reload(); }, 550);
+    });
+}
+
+/* ---------------- 点击统计跳到对应项 ---------------- */
+var _jumpIdx = {};
+function jumpTo(kind) {
+  var els = Array.prototype.slice.call(
+    document.querySelectorAll('[data-jump~="' + kind + '"]'));
+  if (!els.length) { wbToast('没有「' + (KIND_NAME[kind] || kind) + '」的项', 'ok', 1500); return; }
+  var i = (_jumpIdx[kind] || 0) % els.length;
+  _jumpIdx[kind] = i + 1;
+  var el = els[i];
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.remove('flash');
+  void el.offsetWidth;                       /* 强制重排，让动画能重复触发 */
+  el.classList.add('flash');
+  setTimeout(function () { el.classList.remove('flash'); }, 2600);
+  if (els.length > 1) {
+    wbToast((KIND_NAME[kind] || kind) + '：第 ' + (i + 1) + ' / ' + els.length + ' 个（再点跳到下一个）',
+            'ok', 1800);
+  }
+}
+
+/* ---------------- 人工否定的导出处理方式 ---------------- */
+function saveRejMode(mode) {
+  wbApi('/api/files/' + FID + '/reject_mode', { method: 'POST', body: { mode: mode } })
+    .then(function (j) {
+      if (!j.ok) { wbToast(j.error, 'bad'); return; }
+      wbToast('已设为「' + (mode === 'mark' ? '保留并标注不符合规范' : '直接剔除')
+              + '」，下次导出生效', 'ok');
+      setTimeout(function () { location.reload(); }, 600);
+    });
+}
+
+function pickReassign(iid) {
+  var box = document.getElementById('ra-' + iid);
+  var sel = box.querySelector('.ra-sel');
+  if (!box.classList.contains('hide')) { box.classList.add('hide'); return; }
+  if (!sel.options.length) {
+    sel.innerHTML = '<option value="">— 选择要改派的图片 —</option>';
+    CAND.forEach(function (c) {
+      var o = document.createElement('option');
+      o.value = c.sha; o.textContent = c.label;
+      o.dataset.file = c.file;
+      sel.appendChild(o);
+    });
+  }
+  box.classList.remove('hide');
+}
+function doReassign(iid) {
+  var sel = document.querySelector('#ra-' + iid + ' .ra-sel');
+  if (!sel.value) { wbToast('请选择图片', 'warn'); return; }
+  var file = sel.options[sel.selectedIndex].dataset.file || '';
+  wbApi('/api/files/' + FID + '/actions', { method: 'POST',
+    body: { decision: 'reassign', items: [iid], img_sha: sel.value, img_file: file } })
+    .then(function (j) {
+      if (!j.ok) { wbToast(j.error, 'bad'); return; }
+      wbToast('已改派', 'ok');
+      setTimeout(function () { location.reload(); }, 450);
+    });
+}
+
+var _adSha = null;
+function openAdopt(sha, name, sec) {
+  _adSha = sha;
+  document.getElementById('adName').value = name || '';
+  var s = document.getElementById('adSec');
+  for (var i = 0; i < s.options.length; i++) {
+    if (s.options[i].value === sec) s.selectedIndex = i;
+  }
+  document.getElementById('adopt').classList.add('on');
+}
+function closeAdopt() { document.getElementById('adopt').classList.remove('on'); }
+function doAdopt() {
+  var name = document.getElementById('adName').value.trim();
+  if (!name) { wbToast('请填写奖项名', 'warn'); return; }
+  wbApi('/api/files/' + FID + '/orphan/adopt', { method: 'POST',
+    body: { img_sha: _adSha, award_name: name, section: document.getElementById('adSec').value } })
+    .then(function (j) {
+      if (!j.ok) { wbToast(j.error, 'bad'); return; }
+      wbToast('已采纳，导出时会归入所选板块', 'ok');
+      closeAdopt();
+      setTimeout(function () { location.reload(); }, 500);
+    });
+}
+function unadopt(sha) {
+  if (!confirm('撤销这条采纳？图片会回到「未认领」区。')) return;
+  wbApi('/api/files/' + FID + '/orphan/adopt?img_sha=' + encodeURIComponent(sha),
+        { method: 'DELETE' }).then(function (j) {
+    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    wbToast('已撤销采纳', 'ok');
+    setTimeout(function () { location.reload(); }, 450);
+  });
+}
+
+function exportOne() {
+  var btn = document.getElementById('expBtn');
+  btn.disabled = true; btn.textContent = '生成中…';
+  wbApi('/api/files/' + FID + '/export', { method: 'POST' }).then(function (j) {
+    if (!j.ok) { wbToast(j.error || '导出失败', 'bad'); btn.disabled = false; btn.textContent = '导出 Word'; return; }
+    wbPoll(j.task_id, function (t) { btn.textContent = '生成中 ' + (t.percent || 0) + '%'; },
+      function (t) {
+        btn.disabled = false; btn.textContent = '导出 Word';
+        if (t.status === 'done') {
+          wbToast('导出完成，开始下载', 'ok');
+          window.location = '/api/exports/' + t.id + '/download';
+        } else {
+          wbToast('导出失败：' + (t.error || ''), 'bad', 6000);
+        }
+      });
+  });
+}
+
+/* 键盘：j / k 快速在"需判断"之间跳 */
+document.addEventListener('keydown', function (e) {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT'
+      || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'j') jumpTo('need');
+});
+document.addEventListener('DOMContentLoaded', syncCount);
+</script>
+{% endblock %}
