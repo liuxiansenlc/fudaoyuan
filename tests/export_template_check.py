@@ -89,6 +89,50 @@ def main():
         '_h_export 缺少"零成功则报错"的守护'
     print('4) 空产出守护 OK（零成功时明确报错，不再给空 zip）')
 
+    # 5) 全板块骨架：模板六大板块恒在，空板块/空子标题写「无」，不减少模板内容
+    view_empty = {
+        'student': {'name': '空同学', 'class_no': '20230826班'},
+        'scheme': [],                       # 不依赖方案，也要输出全部模板板块
+        'sections': [
+            # 只有竞赛的"国家级"一条，其余板块全空
+            {'key': '竞赛', 'label': '二、学科竞赛获奖（A类竞赛需注明）', 'rows': [
+                {'item_id': 9, 'item_text': '1. 全国大学生数学建模竞赛国家级一等奖',
+                 'status': 'blue', 'img': {'url': '/img/_none_.png', 'vlevel': '国家级'},
+                 'extra_imgs': []}],
+             'leftover': [], 'leftover_main': [], 'leftover_self': [], 'ok': True},
+        ],
+        'stats': {}, 'reject_mode': 'remove',
+    }
+    out3 = os.path.join(d, 'skeleton.docx')
+    EX.build_docx(view_empty, out3, program_name='国家奖学金')
+    doc3 = Document(out3)
+    paras = [p.text.strip() for p in doc3.paragraphs if p.text.strip()]
+    seq = '\n'.join(paras)
+    # 六大板块标题必须全部出现（顺序一致）
+    heads = ['一、曾获奖学金', '二、学科竞赛获奖（A类竞赛需注明）', '三、科研创新',
+             '四、荣誉情况（校级及以上）', '五、体测', '六、志愿者时长']
+    for i, hd in enumerate(heads):
+        assert hd in paras, '缺少板块标题：%s' % hd
+        if i:
+            assert paras.index(heads[i - 1]) < paras.index(hd), '板块顺序不对：%s' % hd
+    # 模板子标题恒在
+    for sub in ['（一）国家级', '（二）省级', '（一）校级']:
+        assert sub in paras, '缺少子标题：%s' % sub
+    # 空板块/空子标题都写「无」：应至少出现 4 处（奖学金、科研、荣誉、体测、志愿 + 省级）
+    assert paras.count('无') >= 4, '空板块未写「无」（%d 处）' % paras.count('无')
+    # 具体抽查：曾获奖学金 紧接 无
+    i0 = paras.index('一、曾获奖学金')
+    assert paras[i0 + 1] == '无', '「曾获奖学金」下应为「无」，实际=%r' % paras[i0 + 1]
+    # （二）省级 下应为「无」
+    i1 = paras.index('（二）省级')
+    assert paras[i1 + 1] == '无', '「（二）省级」下应为「无」，实际=%r' % paras[i1 + 1]
+    # 科研的（一）校级 下应为「无」
+    i2 = paras.index('（一）校级')
+    assert paras[i2 + 1] == '无', '「（一）校级」下应为「无」，实际=%r' % paras[i2 + 1]
+    # 旧的「（本板块未提交材料）」不应再出现
+    assert '（本板块未提交材料）' not in seq, '仍残留旧文案'
+    print('5) 全板块骨架 OK（六大板块齐全、空板块写「无」、子标题恒在）')
+
     print('\n全部通过')
 
 

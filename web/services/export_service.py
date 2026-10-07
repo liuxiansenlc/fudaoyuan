@@ -43,9 +43,33 @@ REJECT_NOTE = '（经审核不符合申报规范，仅作留痕，不计入申�
 # 否则「导出用一套文案、审核页用另一套文案」会不知不觉漂移。
 TPL_SECTIONS = [(k, SEC.with_ordinal(i, SEC.CATALOG_MAP[k]))
                 for i, k in enumerate(SEC.TPL_KEYS)]
-COMP_SUB = [('国家级', '（一）国家级'), ('省级', '（二）省级'), ('其他', '（三）校级及其他级别')]
+COMP_SUB = [('国家级', '（一）国家级'), ('省级', '（二）省级'),
+            ('其他', '（三）校级及其他级别')]
 EXPORTABLE = {'green', 'blue', 'confirmed', 'manual', 'adopted'}
 PENDING = {'amber', 'pending_weak', 'red', 'red_flag', 'declared'}
+
+# ★ 模板固定骨架（严格照 engine/assets/template.docx）。
+#   导出必须**完整保留**这套骨架：某个板块学生没材料，就写「无」，
+#   而不是把整块删掉 —— 否则不同学生的 Word 板块数不一样，无法横向比对。
+#   子标题同理：竞赛的（一）国家级 /（二）省级、科研的（一）校级，恒在。
+TEMPLATE_SKELETON = [
+    ('奖学金', []),
+    ('竞赛', ['国家级', '省级']),        # 有内容才补「（三）校级及其他级别」
+    ('科研', ['校级']),
+    ('荣誉', []),
+    ('体测', []),
+    ('志愿', []),
+]
+TPL_SKELETON_KEYS = [k for k, _ in TEMPLATE_SKELETON]
+# 这些子标题在模板里就存在，必须**无条件**输出（即使没有内容）
+ALWAYS_SUBS = {'竞赛': ['国家级', '省级'], '科研': ['校级']}
+
+
+def _none_para(doc, indent=24):
+    """空板块/空子标题统一写「无」，与模板保持一致。"""
+    p = _para(doc, indent_pt=indent, space_after=6)
+    _font(p.add_run('无'), BODY_FONT, 12)
+    return p
 
 
 # ------------------------------------------------------------------ 字体与段落
@@ -193,6 +217,50 @@ def _count_drawings(doc):
     return len(doc.element.body.findall('.//' + qn('w:drawing')))
 
 
+def _export_sections(view):
+    """
+    导出用的板块列表：[(key, label, subs), ...]。
+
+    ★ 口径：**该奖学金方案里的板块全部保留**（哪怕学生没内容，也写「无」），
+      这样同一个奖学金下不同学生的 Word 板块结构完全一致，能横向比对；
+      但又不会把"这个奖学金根本不看的板块"（如校级奖学金不看科研）硬塞进来。
+      踩过的坑：早先沿用 view['sections']，而它只含**有内容**的板块，
+      于是"学生没有曾获奖学金"整块就消失了 —— 这正是要修的。
+
+      1) 方案内板块：全部保留，顺序与编号按方案。
+      2) 方案外但有内容的板块（人工采纳到"技能证书"等）：补在后面，不能丢。
+      方案为空时（老数据/测试）退回模板六大板块。
+    """
+    scheme = view.get('scheme') or []
+    sec_map = {s['key']: s for s in (view.get('sections') or [])}
+    subs_map = dict(TEMPLATE_SKELETON)
+
+    if scheme:
+        base = [(s['key'], (s.get('label') or SEC.CATALOG_MAP.get(s['key'], s['key'])))
+                for s in scheme]
+    else:
+        base = [(k, SEC.CATALOG_MAP.get(k, k)) for k in TPL_SKELETON_KEYS]
+
+    out, seen, idx = [], set(), 0
+    # 1) 方案内板块：无内容也保留
+    for k, lab in base:
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append((k, SEC.with_ordinal(idx, lab), subs_map.get(k, [])))
+        idx += 1
+    # 2) 方案外但有内容的板块（不能丢，否则"采纳了却找不到类目"）
+    for s in (view.get('sections') or []):
+        k = s['key']
+        if k in seen or not s.get('ok'):
+            continue
+        seen.add(k)
+        out.append((k, SEC.with_ordinal(idx, SEC.CATALOG_MAP.get(k, k)),
+                    subs_map.get(k, [])))
+        idx += 1
+    return out
+
+
 # ------------------------------------------------------------------ 主流程
 def build_docx(view, out_path, template=None, include_pending=True,
                attach_related=True, program_name='', reject_mode=None):
@@ -205,14 +273,12 @@ def build_docx(view, out_path, template=None, include_pending=True,
     template = resolve_template(template or WebConfig.TEMPLATE_DOCX)
 
     doc = _blank_document(template)
-    # ★ 板块顺序与名称**直接沿用审核页渲染出来的那份**（view['sections']），不再自己重算。
-    #   原因：辅导员可以把未认领的图「采纳」到任意板块（例如「技能证书」），
-    #   而这个板块可能没写在奖学金的板块方案里。若导出只遍历方案，
-    #   这些条目会在 Word 里**凭空消失**（认领了却找不到类目）。
-    #   view['sections'] 的顺序已是「方案板块 → 方案外按目录顺序」，与页面完全一致。
-    sec_list = [(s['key'], s.get('label') or s['key']) for s in (view.get('sections') or [])]
-    if not sec_list:
-        sec_list = TPL_SECTIONS
+    # ★ 导出骨架 = **模板全部板块（恒在）** + 方案里额外要看的板块 + 其它有内容的板块。
+    #   踩过的坑：早先直接沿用 view['sections']，而它只含**有内容**的板块
+    #   （ordered_keys 按 present 过滤），于是"某学生没有曾获奖学金"整块就没了，
+    #   不同学生的 Word 板块数不一致，无法横向比对。
+    #   现在模板六大板块一律输出，缺内容写「无」。
+    sec_list = _export_sections(view)
     reject_mode = reject_mode or view.get('reject_mode') or 'remove'
     if reject_mode not in ('remove', 'mark'):
         reject_mode = 'remove'
@@ -223,12 +289,12 @@ def build_docx(view, out_path, template=None, include_pending=True,
     # ---- 把数据摊平，并按板块归拢 ----
     sec_map = {s['key']: s for s in view['sections']}
     rows_by_sec = {}
-    for key, _ in sec_list:
+    for key, _, _ in sec_list:
         s = sec_map.get(key) or {}
         rows_by_sec[key] = [r for r in (s.get('rows') or [])]
 
     # 「同名奖项的第二张证明」：从该板块未认领的图里挑出来，挂到对应条目
-    for key, _ in sec_list:
+    for key, _, _ in sec_list:
         s = sec_map.get(key) or {}
         pool = list(s.get('leftover_main') or [])
         if not attach_related or not pool:
@@ -256,9 +322,9 @@ def build_docx(view, out_path, template=None, include_pending=True,
     t = _para(doc, align=WD_ALIGN_PARAGRAPH.CENTER, space_after=14)
     _font(t.add_run(title), HEAD_FONT, 18, bold=True)
 
-    # ---- 各板块（顺序与审核页一致，方案外的类目也会出现在这里，不会丢） ----
+    # ---- 各板块：模板骨架恒在，缺内容写「无」（绝不减少模板内容） ----
     kept = pending = marked = removed = 0
-    for key, label in sec_list:
+    for key, label, subs in sec_list:
         s = sec_map.get(key) or {}
         rows = _exportable_rows(rows_by_sec[key], reject_mode)
         marked += sum(1 for r in rows if r['status'] == 'rejected')
@@ -275,16 +341,23 @@ def build_docx(view, out_path, template=None, include_pending=True,
         elif key == '科研':
             sub = _para(doc, indent_pt=24.1, space_after=4)
             _font(sub.add_run('（一）校级'), BODY_FONT, 12, bold=True)
-            _write_rows(doc, rows)
+            if rows:
+                _write_rows(doc, rows)
+            else:
+                _none_para(doc, indent=48)
         elif key in ('体测', '志愿'):
-            _write_rows(doc, rows)
-            _write_section_level(doc, self_cards)
+            if rows or self_cards:
+                _write_rows(doc, rows)
+                _write_section_level(doc, self_cards)
+            else:
+                _none_para(doc, indent=24)
         else:
-            _write_rows(doc, rows)
-
-        if not rows and not self_cards:
-            p = _para(doc, indent_pt=24, space_after=6)
-            _font(p.add_run('（本板块未提交材料）'), BODY_FONT, 12)
+            if rows or self_cards:
+                _write_rows(doc, rows)
+                if self_cards:
+                    _write_section_level(doc, self_cards)
+            else:
+                _none_para(doc, indent=24)
 
         kept += len(rows) + len(self_cards)
         pending += sum(1 for r in rows_by_sec[key] if r['status'] in PENDING)
@@ -346,7 +419,11 @@ def _write_rows(doc, rows):
 
 
 def _write_competition(doc, rows):
-    """竞赛板块按级别分子标题，与模板的（一）国家级 /（二）省级 一致。"""
+    """竞赛板块按级别分子标题，与模板的（一）国家级 /（二）省级 一致。
+
+    模板里的（一）国家级 /（二）省级 **恒在**（没内容写「无」）；
+    （三）校级及其他级别 不在模板里，只有确实有内容时才补。
+    """
     buckets = {k: [] for k, _ in COMP_SUB}
     for r in rows:
         lv = ((r.get('img') or {}).get('vlevel') or '') if r.get('img') else ''
@@ -358,10 +435,13 @@ def _write_competition(doc, rows):
             buckets['其他'].append(r)
     for k, label in COMP_SUB:
         items = buckets.get(k) or []
-        if not items:
-            continue
+        if not items and k not in ALWAYS_SUBS['竞赛']:
+            continue                     # （三）非模板项，无内容就不出现
         sub = _para(doc, indent_pt=24.1, space_after=4)
         _font(sub.add_run(label), BODY_FONT, 12, bold=True)
+        if not items:
+            _none_para(doc, indent=48)   # 模板子标题存在但学生无材料 → 写「无」
+            continue
         for i, r in enumerate(items, 1):
             p = _para(doc, indent_pt=24, space_after=4)
             _font(p.add_run('%d. %s' % (i, _clean_text(r['item_text']))), BODY_FONT, 12)
