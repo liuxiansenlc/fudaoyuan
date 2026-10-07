@@ -514,6 +514,64 @@ def _h_export(task, api):
          message='导出 %d 份，失败 %d 份' % (len(made), len(failed)))
 
 
+# ------------------------------------------------------------------ worker 心跳
+# 为什么需要：任务卡在 queued、界面上却显示"处理中"，用户根本不知道
+# 到底有没有 worker 在跑。这里让每个 worker 周期性写一次心跳到 app_settings，
+# 前端据此判断"有没有 worker 活着"，把"在不在处理"变成可观测的事实。
+WORKER_HB_KEY = 'worker_heartbeat'
+_HB_STARTED = False
+
+
+def heartbeat(worker_id=None, inline=False):
+    try:
+        db.set_setting(WORKER_HB_KEY, json.dumps({
+            'worker_id': worker_id or WORKER_ID,
+            'at': db.utcnow(),
+            'inline': bool(inline),
+        }, ensure_ascii=False))
+    except Exception:
+        pass
+
+
+def start_heartbeat(worker_id=None, inline=False, interval=15):
+    """起一个守护线程周期写心跳（幂等）。"""
+    global _HB_STARTED
+    if _HB_STARTED:
+        return
+    _HB_STARTED = True
+    wid = worker_id or WORKER_ID
+
+    def run():
+        while True:
+            heartbeat(wid, inline)
+            time.sleep(interval)
+
+    threading.Thread(target=run, name='worker-heartbeat', daemon=True).start()
+
+
+def worker_status():
+    """读取心跳，判断是否有 worker 活着。alive 的判定留了 3 倍余量。"""
+    import datetime
+    raw = db.get_setting(WORKER_HB_KEY)
+    info = db.jloads(raw) if raw else {}
+    at = (info or {}).get('at')
+    age = None
+    if at:
+        try:
+            d = datetime.datetime.strptime(str(at), '%Y-%m-%dT%H:%M:%S')
+            d = d.replace(tzinfo=datetime.timezone.utc)
+            age = (datetime.datetime.now(datetime.timezone.utc) - d).total_seconds()
+        except Exception:
+            age = None
+    return {
+        'alive': (age is not None and age < 90),
+        'seconds_ago': (None if age is None else int(age)),
+        'worker_id': (info or {}).get('worker_id') or '',
+        'inline': bool((info or {}).get('inline')),
+        'inline_expected': bool(WebConfig.INLINE_WORKER),
+    }
+
+
 # ------------------------------------------------------------------ 内嵌 worker
 _inline_started = False
 
@@ -528,6 +586,7 @@ def start_inline_worker(app):
     if _inline_started or not WebConfig.INLINE_WORKER:
         return
     _inline_started = True
+    start_heartbeat('inline-' + WORKER_ID, inline=True)
 
     def run():
         with app.app_context():

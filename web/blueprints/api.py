@@ -24,6 +24,7 @@ def _task_json(t):
                     if t['progress_total'] else (100 if t['status'] == 'done' else 0)),
         'paused': bool((p or {}).get('paused')),
         'started_at': t.get('started_at'), 'created_at': t.get('created_at'),
+        'worker': TS.worker_status(),
     }
 
 
@@ -43,6 +44,13 @@ def batch_tasks(bid):
     rows = db.q_dict('SELECT * FROM tasks WHERE batch_id=? ORDER BY id DESC LIMIT 20', (bid,))
     out = [_task_json(t) for t in rows]
     return jsonify(ok=True, tasks=out, files=_files_brief(bid))
+
+
+@bp.route('/worker/status')
+@login_required
+def worker_status():
+    """worker 是否活着 —— 界面用来判断"任务到底有没有人在处理"。"""
+    return jsonify(ok=True, worker=TS.worker_status())
 
 
 @bp.route('/batches/<int:bid>/files_table')

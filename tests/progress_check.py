@@ -162,6 +162,25 @@ def main():
         assert r.status_code == 400, '已取消任务不应能暂停'
         print('7) 已结束任务拒绝暂停 OK（HTTP %d）' % r.status_code)
 
+        # 8) worker 心跳 / 状态：让界面能判断"任务到底有没有人在处理"
+        with app.app_context():
+            db.ex("DELETE FROM app_settings WHERE k=?", (TS.WORKER_HB_KEY,))
+        w = c.get('/api/worker/status').get_json()['worker']
+        assert w['alive'] is False, '无心跳时不应判为 alive'
+        with app.app_context():
+            TS.heartbeat('test-worker', inline=True)
+        w = c.get('/api/worker/status').get_json()['worker']
+        assert w['alive'] is True, '写心跳后应判为 alive'
+        assert w['worker_id'] == 'test-worker' and w['inline'] is True
+        # 任务 JSON 也应带上 worker 状态（前端排队告警要用）
+        with app.app_context():
+            tid3 = TS.enqueue('analyze', batch_id=bid, payload={}, user_id=1)
+        t3 = c.get('/api/tasks/%d' % tid3).get_json()['task']
+        assert 'worker' in t3 and t3['worker']['alive'] is True, '任务状态应含 worker 信息'
+        with app.app_context():
+            db.ex('DELETE FROM tasks WHERE id=?', (tid3,))
+        print('8) worker 心跳/状态 OK（alive=%s, id=%s）' % (w['alive'], w['worker_id']))
+
         # 清理
         with app.app_context():
             db.ex('DELETE FROM tasks WHERE id=?', (tid,))

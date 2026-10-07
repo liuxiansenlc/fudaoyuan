@@ -29,6 +29,7 @@ if __name__ == '__main__':
         print('  worker 已启动  id=%s' % TS.WORKER_ID)
         print('  轮询间隔 2s；Ctrl+C 退出')
         print('=' * 58)
+        TS.start_heartbeat(TS.WORKER_ID, inline=False)   # 让界面知道 worker 活着
         TS.requeue_stale(20)
         while True:
             try:

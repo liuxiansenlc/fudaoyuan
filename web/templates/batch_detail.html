@@ -74,6 +74,7 @@
     <span class="mut small" id="runHint">读图会自动跳过已缓存的图片</span>
   </div>
   <div class="card-b">
+    <div id="lastState" class="hide mb12"></div>
     <div id="taskPanel" class="hide">
       <div class="taskbar mb12">
         <span class="chip c-blue" id="tkKind">任务</span>
@@ -84,8 +85,8 @@
       <div class="prog" id="tkBar"><i></i></div>
       <div class="taskmeta mt12">
         <span class="big" id="tkPct">0%</span>
-        <span class="eta" id="tkEta">预计剩余 --:--</span>
-        <span class="clock" id="tkElapsed">已用 00:00</span>
+        <span class="eta" id="tkEta">等待开始…</span>
+        <span class="clock" id="tkElapsed">已用 —</span>
         <div class="sp"></div>
         <button class="btn xs" id="btnPause" onclick="togglePause()">暂停</button>
         <button class="btn xs danger" id="btnStop" onclick="stopTask()">停止</button>
@@ -107,6 +108,7 @@
       </div>
       <div id="expDone" class="mt12"></div>
     </div>
+    <div class="small mt12" id="workerHint"></div>
   </div>
 </div>
 
@@ -134,6 +136,8 @@ document.addEventListener('DOMContentLoaded', function () {
   });
   // 空批次：运行按钮禁用 + 提示先上传
   updateRunState();
+  pollWorker();                              // 立即探测一次 worker
+  workerTimer = setInterval(pollWorker, 10000);
   resumeTasks();
 });
 
@@ -200,8 +204,9 @@ function runBatch(kind) {
 
 /* ---------------- 任务进度：实时进度条 + 剩余时间倒计时 + 启停 ---------------- */
 var CUR_TID = null;
-var ETA = { t0: 0, lastDone: 0, lastT: 0, speed: 0, total: 0 };
-var fileTimer = null;
+var ETA = { t0: 0, lastDone: 0, lastT: 0, speed: 0, total: 0, started: false };
+var fileTimer = null, workerTimer = null, lastWorker = null, queuedSince = 0;
+var seenDone = null, seenT = 0;         // 用于判断"运行中是否真的在推进"
 
 function fmtClock(sec) {
   sec = Math.max(0, Math.round(sec));
@@ -209,48 +214,86 @@ function fmtClock(sec) {
   return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
 }
 
+/* 倒计时只认服务端的真实开始时间；没有开始时间就绝不假装在计时 */
 function resetEta(t) {
-  // 用服务端记录的真实开始时间估算，页面中途刷新也能算准
-  var absT0 = Date.now();
-  if (t.started_at) {
-    var d = new Date(String(t.started_at).replace(' ', 'T') + 'Z');
-    if (!isNaN(d.getTime())) absT0 = d.getTime();
-  }
-  ETA.t0 = absT0;
+  if (!t.started_at) { ETA.started = false; ETA.t0 = 0; ETA.speed = 0; return; }
+  var d = new Date(String(t.started_at).replace(' ', 'T') + 'Z');
+  if (isNaN(d.getTime())) { ETA.started = false; ETA.t0 = 0; return; }
+  ETA.t0 = d.getTime();
+  ETA.started = true;
   ETA.lastDone = t.done || 0;
   ETA.lastT = Date.now();
   ETA.total = t.total || 0;
-  var el = (Date.now() - absT0) / 1000;
-  ETA.speed = (el > 1 && t.done) ? (t.done / el) : 0;   // 先用总体平均速率给个初值
+  var el = (Date.now() - ETA.t0) / 1000;
+  ETA.speed = (el > 1 && t.done) ? (t.done / el) : 0;
 }
 
 function updateEta(t) {
-  if (!ETA.t0) resetEta(t);
-  if (t.total) ETA.total = t.total;
+  var etaEl = document.getElementById('tkEta');
+  var clkEl = document.getElementById('tkElapsed');
+
+  if (t.status === 'done') {
+    if (etaEl) { etaEl.textContent = '已完成'; etaEl.className = 'eta done'; }
+    if (clkEl && ETA.started) clkEl.textContent = '已用 ' + fmtClock((Date.now() - ETA.t0) / 1000);
+    return;
+  }
+  if (t.status === 'canceled') {
+    if (etaEl) { etaEl.textContent = '已停止'; etaEl.className = 'eta'; }
+    return;
+  }
+  if (t.paused) {
+    if (etaEl) { etaEl.textContent = '已暂停'; etaEl.className = 'eta'; }
+    if (clkEl && ETA.started) clkEl.textContent = '已用 ' + fmtClock((Date.now() - ETA.t0) / 1000);
+    return;
+  }
+  // 还没被 worker 认领（queued）：不显示假倒计时，明确告诉用户在排队
+  if (!t.started_at) {
+    ETA.started = false;
+    if (etaEl) { etaEl.textContent = '等待开始…'; etaEl.className = 'eta'; }
+    if (clkEl) clkEl.textContent = '已用 —';
+    return;
+  }
+  if (!ETA.started) resetEta(t);
+
   var now = Date.now();
   var dn = (t.done || 0) - ETA.lastDone;
   var dt = (now - ETA.lastT) / 1000;
   if (dt > 0 && dn >= 0) {
-    var inst = dn / dt;                                  // 本次采样速率
+    var inst = dn / dt;
     ETA.speed = ETA.speed ? (ETA.speed * 0.7 + inst * 0.3) : inst;
   }
   ETA.lastDone = t.done || 0;
   ETA.lastT = now;
+  if (t.total) ETA.total = t.total;
 
-  var el = document.getElementById('tkElapsed');
-  if (el) el.textContent = '已用 ' + fmtClock((now - ETA.t0) / 1000);
-
-  var etaEl = document.getElementById('tkEta');
+  if (clkEl) clkEl.textContent = '已用 ' + fmtClock((now - ETA.t0) / 1000);
   if (!etaEl) return;
   etaEl.className = 'eta';
-  if (t.status === 'done') { etaEl.textContent = '已完成'; etaEl.className = 'eta done'; return; }
-  if (t.status === 'canceled') { etaEl.textContent = '已停止'; return; }
-  if (t.paused) { etaEl.textContent = '已暂停'; return; }
-  if (!ETA.total || !t.done) { etaEl.textContent = '预计剩余 --:--'; return; }
+  if (!ETA.total || !t.done) { etaEl.textContent = '预计剩余 计算中…'; return; }
   var remain = ETA.total - (t.done || 0);
   if (remain <= 0) { etaEl.textContent = '即将完成…'; return; }
   etaEl.textContent = ETA.speed > 0.0001 ? ('预计剩余 ' + fmtClock(remain / ETA.speed))
                                          : '预计剩余 计算中…';
+}
+
+function renderWorker(w) {
+  lastWorker = w;
+  var el = document.getElementById('workerHint');
+  if (!el) return;
+  if (w && w.alive) {
+    el.innerHTML = '<span class="chip c-ok">worker 运行中</span> ' +
+      '<span class="mut2">最近心跳 ' + (w.seconds_ago == null ? '—' : w.seconds_ago + ' 秒前') +
+      (w.inline ? ' · 内嵌模式' : ' · 独立进程') + '</span>';
+  } else {
+    el.innerHTML = '<span class="chip c-bad">未检测到 worker</span> ' +
+      '<span class="c-bad">任务会一直停在「排队等待」，不会真正处理。' +
+      '请在服务器上启用 worker：设 WB_INLINE_WORKER=1 后重启服务，' +
+      '或单独运行 <b>python worker.py</b>。</span>';
+  }
+}
+
+function pollWorker() {
+  wbApi('/api/worker/status').then(function (j) { if (j.ok) renderWorker(j.worker); });
 }
 
 function renderTask(t) {
@@ -261,14 +304,46 @@ function renderTask(t) {
   bar.querySelector('i').style.width = (t.percent || 0) + '%';
   document.getElementById('tkKind').textContent =
     { read_images: '读图 + 出结论', analyze: '配对出结论', export: '导出 Word' }[t.kind] || t.kind;
-  document.getElementById('tkPhase').textContent =
-    t.status === 'failed' ? '任务失败'
-      : (t.status === 'canceled' ? '已停止'
-        : (t.paused ? '已暂停' : (t.phase || '处理中')));
+
+  var phase;
+  if (t.status === 'failed') phase = '任务失败';
+  else if (t.status === 'canceled') phase = '已停止';
+  else if (t.paused) phase = '已暂停';
+  else if (t.status === 'queued') phase = '排队等待中';
+  else phase = t.phase || '处理中';
+  document.getElementById('tkPhase').textContent = phase;
+
   document.getElementById('tkCount').textContent = t.total ? (t.done + ' / ' + t.total) : '';
   document.getElementById('tkPct').textContent =
     (t.total ? (t.percent || 0).toFixed(0) : (t.status === 'done' ? 100 : 0)) + '%';
   document.getElementById('tkMsg').textContent = t.error || t.message || '';
+
+  // 排队但没有 worker 在跑 → 明确告警（否则用户会一直以为"在处理"）
+  if (t.status === 'queued') {
+    if (!queuedSince) queuedSince = Date.now();
+    if (lastWorker && !lastWorker.alive) {
+      document.getElementById('tkMsg').innerHTML =
+        '<span class="c-bad">任务在排队，但当前没有检测到 worker 进程，' +
+        '它不会真正开始处理 —— 请检查 worker 是否已启动。</span>';
+    }
+  } else {
+    queuedSince = 0;
+  }
+
+  // 运行中：进度长时间不动 → 明确提示，避免"以为在跑其实卡住"
+  if (t.status === 'running' && !t.paused) {
+    if (t.done !== seenDone) { seenDone = t.done; seenT = Date.now(); }
+    if (!seenT) { seenT = Date.now(); }
+    var idle = (Date.now() - seenT) / 1000;
+    if (idle >= 90) {
+      var box = document.getElementById('tkMsg');
+      box.textContent = (box.textContent || '') + '（已 ' + Math.round(idle) + ' 秒无进度更新）';
+    }
+  } else {
+    seenT = Date.now();
+  }
+
+  if (t.worker) renderWorker(t.worker);
 
   var running = (t.status === 'running' || t.status === 'queued');
   var bp = document.getElementById('btnPause');
@@ -291,26 +366,56 @@ function refreshFiles() {
 function startFilePoll() { if (!fileTimer) fileTimer = setInterval(refreshFiles, 1500); }
 function stopFilePoll() { if (fileTimer) { clearInterval(fileTimer); fileTimer = null; } }
 
+function showLastState(t) {
+  /* 已经结束的任务：用一条提示说明，但**不隐藏运行按钮**，随时可以再跑一次 */
+  var box = document.getElementById('lastState');
+  if (!box) return;
+  if (!t) { box.classList.add('hide'); box.innerHTML = ''; return; }
+  var when = t.created_at ? (' · ' + t.created_at.replace('T', ' ').slice(0, 16)) : '';
+  if (t.status === 'failed') {
+    box.className = 'note bad mb12';
+    box.innerHTML = '<b>上次任务失败</b>' + when + '<br>' + (t.error || '（无错误信息）');
+  } else if (t.status === 'canceled') {
+    box.className = 'note warn mb12';
+    box.innerHTML = '<b>上次任务已停止</b>' + when +
+      '。已完成的进度保留，可直接点下方按钮重新运行。';
+  } else if (t.status === 'done') {
+    box.className = 'note ok mb12';
+    box.innerHTML = '<b>上次任务已完成</b>' + when + '：' + (t.message || '');
+  } else {
+    box.classList.add('hide'); box.innerHTML = ''; return;
+  }
+  box.classList.remove('hide');
+}
+
 function watch(tid) {
   CUR_TID = tid;
+  resetEta({});                       // 换任务时清空上一次的计时基准
+  seenDone = null; seenT = Date.now();
+  showLastState(null);
   document.getElementById('taskPanel').classList.remove('hide');
   document.getElementById('runIdle').classList.add('hide');
   if (stopPoll) stopPoll();
   startFilePoll();
+  pollWorker();
   stopPoll = wbPoll(tid, function (t) {
     renderTask(t);
   }, function (t) {
     renderTask(t);
     stopFilePoll();
     refreshFiles();
+    pollWorker();
     if (t.status === 'done') {
       wbToast('完成', 'ok');
       if (t.kind === 'export') { showDownload(t.id); return; }
       setTimeout(function () { location.reload(); }, 900);
     } else if (t.status === 'failed') {
       wbToast('任务失败：' + (t.error || ''), 'bad', 6000);
+      // 失败后恢复出运行按钮，方便重试
+      setTimeout(function () { document.getElementById('runIdle').classList.remove('hide'); }, 1200);
     } else if (t.status === 'canceled') {
       wbToast('任务已停止，已完成的进度保留', 'warn');
+      setTimeout(function () { document.getElementById('runIdle').classList.remove('hide'); }, 1200);
     }
   });
 }
@@ -353,6 +458,7 @@ function showDownload(tid) {
       ' <a class="btn sm pri" style="margin-left:8px" href="/api/exports/' + tid +
       '/download">下载 zip</a></div>';
     wbToast('导出完成，可下载', 'ok');
+    document.getElementById('runIdle').classList.remove('hide');
   });
 }
 
@@ -363,18 +469,8 @@ function resumeTasks() {
       return t.status === 'running' || t.status === 'queued';
     })[0];
     if (running) { watch(running.id); return; }
-    var last = j.tasks[0];
-    if (last && (last.status === 'failed' || last.status === 'canceled')) {
-      document.getElementById('taskPanel').classList.remove('hide');
-      document.getElementById('runIdle').classList.add('hide');
-      var bar = document.getElementById('tkBar');
-      bar.classList.add(last.status === 'failed' ? 'fail' : 'done');
-      document.getElementById('tkPhase').textContent =
-        last.status === 'failed' ? '上次任务失败' : '上次任务已停止';
-      document.getElementById('tkMsg').textContent = last.error || '';
-      document.getElementById('btnPause').classList.add('hide');
-      document.getElementById('btnStop').classList.add('hide');
-    }
+    // 没有在跑的任务：只把"上次结果"作为提示显示，运行按钮始终保留
+    if (j.tasks.length && j.tasks[0]) showLastState(j.tasks[0]);
   });
 }
 
