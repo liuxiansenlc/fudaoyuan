@@ -164,4 +164,62 @@
     while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
     return (i ? n.toFixed(1) : n) + ' ' + u[i];
   };
+
+  // ------------------------------------------------------------ 移动端导航抽屉
+  // 手机/平板下侧栏是"滑出抽屉"，用 html[data-nav] 驱动 CSS，逻辑集中在这里。
+  // 桌面端这些函数不会被触发（按钮隐藏），行为完全不变。
+  function navState() { return document.documentElement.getAttribute('data-nav') === 'open'; }
+
+  function navOpen() {
+    if (navState()) return;
+    document.documentElement.setAttribute('data-nav', 'open');
+    var btn = document.getElementById('navBtn');
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+    // 把焦点交给第一个导航项，键盘用户 Tab 就能在菜单里走
+    var first = document.querySelector('#mainnav a');
+    if (first) setTimeout(function () { first.focus(); }, 60);
+  }
+
+  window.wbNavClose = function () {
+    if (!navState()) return;
+    document.documentElement.removeAttribute('data-nav');
+    var btn = document.getElementById('navBtn');
+    if (btn) { btn.setAttribute('aria-expanded', 'false'); btn.focus(); }
+  };
+
+  window.wbNavToggle = function () { navState() ? wbNavClose() : navOpen(); };
+
+  window.wbNavIsOpen = navState;
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && navState()) wbNavClose();
+  });
+  // 点导航项后自动收起（页面会跳转；即使不跳转也不会留个开着的抽屉）
+  var _nav = document.getElementById('mainnav');
+  if (_nav) _nav.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('a')) wbNavClose();
+  });
+  // 拉宽到桌面宽度时要复位，避免 data-nav 残留把桌面样式搞乱
+  var _mql = window.matchMedia('(min-width: 901px)');
+  var _onWide = function (mq) { if (mq.matches) document.documentElement.removeAttribute('data-nav'); };
+  if (_mql.addEventListener) _mql.addEventListener('change', _onWide);
+  else if (_mql.addListener) _mql.addListener(_onWide);
+
+  // ------------------------------------------------------------ 提交态
+  // 表单/异步按钮点一次就禁用并转圈，防止"点了没反应"被连点导致重复请求
+  window.wbBtnLoading = function (btn, on) {
+    if (!btn) return;
+    if (on) {
+      if (btn.dataset._loading === '1') return;
+      btn.dataset._loading = '1';
+      btn.classList.add('loading');
+      btn.setAttribute('aria-busy', 'true');
+      btn.disabled = true;
+    } else {
+      delete btn.dataset._loading;
+      btn.classList.remove('loading');
+      btn.removeAttribute('aria-busy');
+      btn.disabled = false;
+    }
+  };
 })();

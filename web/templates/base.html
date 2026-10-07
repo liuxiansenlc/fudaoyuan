@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}{{ app_name }}{% endblock %}</title>
 <meta name="csrf-token" content="{{ csrf() }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v={{ asset_v }}">
 <script>
 (function(){
   var t = localStorage.getItem('wb-theme');
@@ -32,7 +32,7 @@
 
 {% if cu %}
 <div class="shell">
-  <aside class="side">
+  <aside class="side" id="sidebar">
     <div class="brand">
       <div class="logo">奖</div>
       <div>
@@ -41,7 +41,7 @@
       </div>
     </div>
 
-    <nav class="nav">
+    <nav class="nav" id="mainnav" aria-label="主导航">
       <div class="grp">工作台</div>
       <a href="{{ url_for('main.dashboard') }}" class="{{ 'on' if request.endpoint=='main.dashboard' }}">
         {{ icon('home') }} 总览</a>
@@ -86,6 +86,11 @@
 
   <div class="main">
     <header class="topbar">
+      <button type="button" class="menubtn" id="navBtn" onclick="wbNavToggle()"
+              aria-label="打开导航菜单" aria-controls="sidebar" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true">
+          <path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
       <div class="crumb">{% block crumb %}{% endblock %}</div>
       <div class="sp"></div>
       {% block tools %}{% endblock %}
@@ -107,6 +112,8 @@
     </main>
   </div>
 </div>
+<button type="button" class="scrim" id="navScrim" tabindex="-1" aria-hidden="true"
+        onclick="wbNavClose()"></button>
 {% else %}
   {% block anon %}{% endblock %}
 {% endif %}
@@ -118,7 +125,7 @@
   <div class="lb-cap" id="lbCap" aria-live="polite"></div>
 </div>
 <div class="toasts" id="toasts"></div>
-<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}?v={{ asset_v }}"></script>
 {% block js %}{% endblock %}
 </body>
 </html>

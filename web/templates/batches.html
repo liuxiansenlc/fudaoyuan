@@ -42,23 +42,24 @@
       <span class="mut small">{{ batches|length }} 个</span></div>
     <div class="card-b tight">
       {% if batches %}
-      <table class="tb">
+      <div class="tbwrap">
+      <table class="tb resp">
         <thead><tr><th>批次</th><th style="width:150px">奖学金项目</th>
           <th class="num">材料</th><th class="num">已分析</th>
           <th class="num">条目</th><th>状态</th><th></th></tr></thead>
         <tbody>
         {% for b in batches %}
           <tr>
-            <td>
+            <td data-label="批次">
               <div style="font-weight:500">{{ b.name }}</div>
               <div class="mut small">{{ b.note or '' }}{% if b.note %} · {% endif %}{{ b.created_at | dt }}</div>
             </td>
-            <td>{% if b.program_name %}<span class="chip c-acc">{{ b.program_name }}</span>
+            <td data-label="奖学金项目">{% if b.program_name %}<span class="chip c-acc">{{ b.program_name }}</span>
                 {% else %}<span class="chip c-warn">未绑定项目</span>{% endif %}</td>
-            <td class="num">{{ b.files }}</td>
-            <td class="num">{{ b.analyzed }}</td>
-            <td class="num">{{ b.n_items }}</td>
-            <td>
+            <td class="num" data-label="材料">{{ b.files }}</td>
+            <td class="num" data-label="已分析">{{ b.analyzed }}</td>
+            <td class="num" data-label="条目">{{ b.n_items }}</td>
+            <td data-label="状态">
               {% if b.files and b.analyzed == b.files %}<span class="chip c-ok">已完成</span>
               {% elif b.analyzed %}<span class="chip c-warn">部分完成</span>
               {% elif b.files %}<span class="chip c-blue">已上传</span>
@@ -69,6 +70,7 @@
         {% endfor %}
         </tbody>
       </table>
+      </div>
       {% else %}
       <div class="empty"><div class="ic">📦</div><div>还没有批次，先在左边建一个</div></div>
       {% endif %}

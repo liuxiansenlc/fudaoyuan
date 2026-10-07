@@ -13,22 +13,24 @@
       <a class="btn sm ghost" href="{{ url_for('main.batch_detail', bid=g.batch.id) }}">批次详情 →</a>
     </div>
     <div class="card-b tight">
-      <table class="tb">
+      <div class="tbwrap">
+      <table class="tb resp">
         <thead><tr><th style="width:110px">学生</th><th>文件</th>
           <th class="num" style="width:70px">条目</th><th class="num" style="width:70px">图片</th>
           <th style="width:120px"></th></tr></thead>
         <tbody>
         {% for f in g.files %}
           <tr>
-            <td><b>{{ f.student_name or '—' }}</b></td>
-            <td class="mut small">{{ f.orig_name }}</td>
-            <td class="num">{{ f.n_items }}</td>
-            <td class="num">{{ f.n_images }}</td>
+            <td data-label="学生"><b>{{ f.student_name or '—' }}</b></td>
+            <td data-label="文件" class="mut small">{{ f.orig_name }}</td>
+            <td class="num" data-label="条目">{{ f.n_items }}</td>
+            <td class="num" data-label="图片">{{ f.n_images }}</td>
             <td class="tar"><a class="btn xs pri" href="{{ url_for('review.detail', fid=f.id) }}">审核</a></td>
           </tr>
         {% endfor %}
         </tbody>
       </table>
+      </div>
     </div>
   </div>
   {% endfor %}

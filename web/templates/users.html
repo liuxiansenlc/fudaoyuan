@@ -25,19 +25,20 @@
     <div class="card-h"><h2>用户列表</h2><div class="sp"></div>
       <span class="mut small">{{ users | length }} 个</span></div>
     <div class="card-b tight">
-      <table class="tb">
+      <div class="tbwrap">
+      <table class="tb resp">
         <thead><tr><th>用户</th><th style="width:80px">角色</th><th style="width:80px">状态</th>
           <th style="width:190px"></th></tr></thead>
         <tbody>
         {% for u in users %}
           <tr>
-            <td>
+            <td data-label="用户">
               <div style="font-weight:500">{{ u.display_name or u.username }}</div>
               <div class="mut small mono">{{ u.username }} · {{ u.created_at | dt('%Y-%m-%d') }}</div>
             </td>
-            <td>{% if u.is_admin %}<span class="chip c-acc">管理员</span>
+            <td data-label="角色">{% if u.is_admin %}<span class="chip c-acc">管理员</span>
                 {% else %}<span class="chip c-muted">审核员</span>{% endif %}</td>
-            <td>{% if u.is_active %}<span class="chip c-ok">正常</span>
+            <td data-label="状态">{% if u.is_active %}<span class="chip c-ok">正常</span>
                 {% else %}<span class="chip c-bad">已停用</span>{% endif %}</td>
             <td class="tar nowrap">
               <button class="btn xs ghost" onclick="resetPwd({{ u.id }})">重置密码</button>
@@ -50,6 +51,7 @@
         {% endfor %}
         </tbody>
       </table>
+      </div>
     </div>
   </div>
 </div>

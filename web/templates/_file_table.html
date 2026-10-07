@@ -1,5 +1,6 @@
 {% if files %}
-<table class="tb">
+<div class="tbwrap">
+<table class="tb resp">
   <thead>
     <tr>
       <th style="width:92px">学生</th>
@@ -13,17 +14,17 @@
   <tbody>
   {% for f in files %}
     <tr>
-      <td><b>{{ f.student_name or '—' }}</b></td>
-      <td>
+      <td data-label="学生"><b>{{ f.student_name or '—' }}</b></td>
+      <td data-label="文件">
         <div class="small">{{ f.orig_name }}</div>
         <div class="mut small">
           {{ (f.size / 1024) | round(0) | int }} KB
           {% if f.analyzed_at %} · 分析于 {{ f.analyzed_at | dt }}{% endif %}
         </div>
       </td>
-      <td class="num">{{ f.n_items }}</td>
-      <td class="num">{{ f.n_images }}</td>
-      <td>
+      <td class="num" data-label="条目">{{ f.n_items }}</td>
+      <td class="num" data-label="图片">{{ f.n_images }}</td>
+      <td data-label="状态">
         {% if f.status == 'analyzed' %}<span class="chip c-ok">已出结论</span>
         {% elif f.status == 'reading' %}<span class="chip c-blue hot">读取中…</span>
         {% elif f.status == 'analyzing' %}<span class="chip c-blue hot">配对中…</span>
@@ -43,6 +44,7 @@
   {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <div class="empty">
   <div class="ic">📄</div>

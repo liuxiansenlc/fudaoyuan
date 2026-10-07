@@ -169,6 +169,7 @@
           </div>
           {% set own = ref_rows | selectattr('kind', 'equalto', kind) | list %}
           {% if own %}
+          <div class="tbwrap">
           <table class="tb mt6">
             <tbody>
             {% for r in own %}
@@ -185,6 +186,7 @@
             {% endfor %}
             </tbody>
           </table>
+          </div>
           {% else %}
           <div class="mut small mt6">
             未单独配置 ·
@@ -237,21 +239,23 @@
     <a class="btn sm" href="{{ url_for('main.batches') }}">新建批次 →</a></div>
   <div class="card-b tight">
     {% if batches %}
-    <table class="tb">
+    <div class="tbwrap">
+    <table class="tb resp">
       <thead><tr><th>批次</th><th class="num">材料</th><th class="num">已出结论</th>
         <th>创建时间</th><th style="width:80px"></th></tr></thead>
       <tbody>
       {% for b in batches %}
         <tr>
-          <td style="font-weight:500">{{ b.name }}</td>
-          <td class="num">{{ b.n_files }}</td>
-          <td class="num">{{ b.n_analyzed }}</td>
-          <td class="mut small">{{ b.created_at | dt }}</td>
+          <td data-label="批次" style="font-weight:500">{{ b.name }}</td>
+          <td class="num" data-label="材料">{{ b.n_files }}</td>
+          <td class="num" data-label="已出结论">{{ b.n_analyzed }}</td>
+          <td class="mut small" data-label="创建时间">{{ b.created_at | dt }}</td>
           <td class="tar"><a class="btn xs" href="{{ url_for('main.batch_detail', bid=b.id) }}">进入</a></td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
+    </div>
     {% else %}
     <div class="empty"><div class="ic">📦</div>
       <div>这个项目下还没有批次</div>
@@ -272,7 +276,7 @@ CATALOG.forEach(function (x) { CATMAP[x[0]] = x[1]; });
 /* ---------------- 板块方案编辑器 ---------------- */
 function renderScheme() {
   var box = document.getElementById('schemeList');
-  var h = '<table class="tb"><thead><tr><th style="width:56px">顺序</th>' +
+  var h = '<div class="tbwrap"><table class="tb"><thead><tr><th style="width:56px">顺序</th>' +
           '<th style="width:150px">板块</th><th>显示名称</th>' +
           '<th style="width:76px">必需</th><th style="width:110px"></th></tr></thead><tbody>';
   SCHEME.forEach(function (s, i) {
@@ -289,7 +293,7 @@ function renderScheme() {
       '<td class="tar"><button class="btn xs danger" onclick="rm(' + i + ')">移除</button></td>' +
       '</tr>';
   });
-  h += '</tbody></table>';
+  h += '</tbody></table></div>';
   box.innerHTML = h;
   // 可选板块下拉（排除已选）
   var used = {}; SCHEME.forEach(function (s) { used[s.key] = 1; });

@@ -60,6 +60,20 @@ def create_app(init=True):
             return '会话已过期，请返回重新操作', 400
         return None
 
+    def _asset_version():
+        """静态资源版本号：取 app.css/app.js 的修改时间。
+
+        升级后浏览器不会继续用旧的缓存样式 —— 免掉"明明部署了却没变化"这个
+        非常容易误判成代码 bug 的经典坑。
+        """
+        try:
+            base = app.static_folder
+            stamps = [os.path.getmtime(os.path.join(base, 'css', 'app.css')),
+                      os.path.getmtime(os.path.join(base, 'js', 'app.js'))]
+            return str(int(max(stamps)))
+        except Exception:
+            return '1'
+
     @app.context_processor
     def _inject():
         from .security import csrf_token, usage_today, using_default_password
@@ -78,6 +92,7 @@ def create_app(init=True):
             'usage_calls': calls,
             'usage_images': images,
             'app_name': '奖学金材料审核工作台',
+            'asset_v': _asset_version(),
         }
 
     @app.template_filter('dt')

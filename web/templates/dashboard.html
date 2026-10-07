@@ -44,21 +44,22 @@
     </div>
     <div class="card-b tight">
       {% if batches %}
-      <table class="tb">
+      <div class="tbwrap">
+      <table class="tb resp">
         <thead><tr><th>批次</th><th style="width:140px">奖学金项目</th>
           <th class="num">材料</th><th class="num">已分析</th><th>状态</th><th></th></tr></thead>
         <tbody>
         {% for b in batches %}
           <tr>
-            <td>
+            <td data-label="批次">
               <div style="font-weight:500">{{ b.name }}</div>
               <div class="mut small">{{ b.created_at | dt }}</div>
             </td>
-            <td>{% if b.program_name %}<span class="chip c-acc">{{ b.program_name }}</span>
+            <td data-label="奖学金项目">{% if b.program_name %}<span class="chip c-acc">{{ b.program_name }}</span>
                 {% else %}<span class="mut small">—</span>{% endif %}</td>
-            <td class="num">{{ b.files }}</td>
-            <td class="num">{{ b.analyzed }}</td>
-            <td>
+            <td class="num" data-label="材料">{{ b.files }}</td>
+            <td class="num" data-label="已分析">{{ b.analyzed }}</td>
+            <td data-label="状态">
               {% if b.files and b.analyzed == b.files %}<span class="chip c-ok">已完成</span>
               {% elif b.analyzed %}<span class="chip c-warn">部分完成</span>
               {% else %}<span class="chip c-muted">待运行</span>{% endif %}
@@ -68,6 +69,7 @@
         {% endfor %}
         </tbody>
       </table>
+      </div>
       {% else %}
       <div class="empty">
         <div class="ic">📁</div>
@@ -105,16 +107,17 @@
 <div class="card mt12">
   <div class="card-h"><h2>最近上传</h2></div>
   <div class="card-b tight">
-    <table class="tb">
+    <div class="tbwrap">
+    <table class="tb resp">
       <thead><tr><th>学生</th><th>文件</th><th class="num">条目</th><th class="num">图片</th><th>状态</th><th></th></tr></thead>
       <tbody>
       {% for f in recent %}
         <tr>
-          <td><b>{{ f.student_name or '—' }}</b></td>
-          <td class="mut small">{{ f.orig_name }}</td>
-          <td class="num">{{ f.n_items }}</td>
-          <td class="num">{{ f.n_images }}</td>
-          <td>
+          <td data-label="学生"><b>{{ f.student_name or '—' }}</b></td>
+          <td data-label="文件" class="mut small">{{ f.orig_name }}</td>
+          <td class="num" data-label="条目">{{ f.n_items }}</td>
+          <td class="num" data-label="图片">{{ f.n_images }}</td>
+          <td data-label="状态">
             {% if f.status == 'analyzed' %}<span class="chip c-ok">已出结论</span>
             {% elif f.status == 'parse_failed' or f.status == 'analyze_failed' %}<span class="chip c-bad" title="{{ f.error }}">失败</span>
             {% else %}<span class="chip c-muted">待运行</span>{% endif %}
@@ -130,6 +133,7 @@
       {% endfor %}
       </tbody>
     </table>
+    </div>
   </div>
 </div>
 {% endif %}

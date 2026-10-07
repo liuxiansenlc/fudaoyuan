@@ -43,30 +43,32 @@
       <span class="mut small">{{ rows | length }} 个</span></div>
     <div class="card-b tight">
       {% if rows %}
-      <table class="tb">
+      <div class="tbwrap">
+      <table class="tb resp">
         <thead><tr><th>项目</th><th style="width:80px">类别</th>
           <th class="num" style="width:64px">批次</th><th class="num" style="width:64px">材料</th>
           <th style="width:78px">状态</th><th style="width:86px"></th></tr></thead>
         <tbody>
         {% for r in rows %}
           <tr>
-            <td>
+            <td data-label="项目">
               <div style="font-weight:500">{{ r.name }}</div>
               <div class="mut small">
                 {{ r.scheme | length }} 个板块{% if r.quota %} · 名额 {{ r.quota }}{% endif %}
                 {% if r.template_path %} · 自定义模板{% endif %}
               </div>
             </td>
-            <td><span class="chip c-muted">{{ r.category }}</span></td>
-            <td class="num">{{ r.n_batches }}</td>
-            <td class="num">{{ r.n_files }}</td>
-            <td>{% if r.status == 'active' %}<span class="chip c-ok">启用中</span>
+            <td data-label="类别"><span class="chip c-muted">{{ r.category }}</span></td>
+            <td class="num" data-label="批次">{{ r.n_batches }}</td>
+            <td class="num" data-label="材料">{{ r.n_files }}</td>
+            <td data-label="状态">{% if r.status == 'active' %}<span class="chip c-ok">启用中</span>
                 {% else %}<span class="chip c-muted">已归档</span>{% endif %}</td>
             <td class="tar"><a class="btn xs" href="{{ url_for('programs.detail', pid=r.id) }}">管理</a></td>
           </tr>
         {% endfor %}
         </tbody>
       </table>
+      </div>
       {% else %}
       <div class="empty"><div class="ic">🎓</div>
         <div>还没有奖学金项目</div>

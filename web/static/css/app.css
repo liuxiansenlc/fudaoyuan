@@ -32,6 +32,14 @@
   --sh-3: 0 12px 32px rgba(20,20,19,.14);
 
   --sidebar-w: 236px;
+  /* ---- 响应式尺寸令牌 ----
+     统一在这里调"随屏幕变"的值，避免各组件各写一套媒体查询（改一处、漏一处）。
+     宽屏取原值，窄屏自动收窄；页面留白、标题、控件高度都跟着它走。 */
+  --page-x: clamp(13px, 1.6vw + 6px, 22px);   /* 页面左右留白 */
+  --page-y: clamp(14px, 1.4vw + 8px, 22px);
+  --gap:    clamp(10px, .9vw + 6px, 14px);    /* 卡片/网格间距 */
+  --ctl-h:  32px;                             /* 按钮/输入框最小高度（窄屏会调高到 40px） */
+  --topbar-h: 54px;
   --font: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
           "Microsoft YaHei", "Source Han Sans SC", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Code", monospace;
@@ -77,8 +85,9 @@ html[data-theme="dark"] {
   }
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { height: 100%; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--tx);
   font: 13.5px/1.65 var(--font);
@@ -154,14 +163,15 @@ p.lead { color: var(--tx2); font-size: 12.5px; margin: 0 0 18px; }
 
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .topbar {
-  height: 54px; border-bottom: 1px solid var(--line); background: var(--panel);
-  display: flex; align-items: center; gap: 14px; padding: 0 22px;
+  height: var(--topbar-h); border-bottom: 1px solid var(--line); background: var(--panel);
+  display: flex; align-items: center; gap: 14px; padding: 0 var(--page-x);
   position: sticky; top: 0; z-index: 30;
 }
-.topbar .crumb { font-size: 13px; color: var(--tx2); display: flex; align-items: center; gap: 7px; }
+.topbar .crumb { font-size: 13px; color: var(--tx2); display: flex; align-items: center; gap: 7px;
+  min-width: 0; overflow: hidden; }
 .topbar .crumb b { color: var(--tx); font-weight: 600; }
 .topbar .sp { flex: 1; }
-.page { padding: 22px; max-width: 1280px; width: 100%; }
+.page { padding: var(--page-y) var(--page-x); max-width: 1280px; width: 100%; }
 .page.wide { max-width: none; }
 
 /* ---------------------------------------------------------------- 卡片 */
@@ -177,7 +187,7 @@ p.lead { color: var(--tx2); font-size: 12.5px; margin: 0 0 18px; }
 .card-b { padding: 16px 18px; }
 .card-b.tight { padding: 0; }
 
-.grid { display: grid; gap: 14px; }
+.grid { display: grid; gap: var(--gap); }
 .g2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
 .g3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 .g4 { grid-template-columns: repeat(auto-fit, minmax(178px, 1fr)); }
@@ -352,7 +362,7 @@ table.tb td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* ---------------------------------------------------------------- 审核页 */
 .rev { display: flex; gap: 18px; align-items: flex-start; }
-.rev .side2 { width: 186px; flex: none; position: sticky; top: 72px; }
+.rev .side2 { width: 186px; flex: none; position: sticky; top: calc(var(--topbar-h) + 18px); }
 .rev .body { flex: 1; min-width: 0; }
 .peer {
   display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-radius: 8px;
@@ -467,11 +477,172 @@ details.acc > summary:hover { color: var(--tx); }
 .hide { display: none !important; }
 .scroll { overflow: auto; }
 
-@media (max-width: 900px) {
-  .side { display: none; }
-  .rev .side2 { display: none; }
-  .row .th { width: 120px; }
+/* ==========================================================================
+   响应式与交互增强
+   目标：手机 / 平板 / 桌面都能顺畅完成"上传 → 运行 → 审核 → 导出"全流程。
+   策略：默认桌面样式不变，仅在窄屏叠加适配；用尺寸令牌集中控制，避免散落。
+   ========================================================================== */
+
+/* 移动端导航按钮（桌面隐藏） */
+.menubtn {
+  display: none; align-items: center; justify-content: center;
+  width: 38px; height: 38px; flex: none; padding: 0;
+  border: 1px solid var(--line); background: var(--card); color: var(--tx2);
+  border-radius: 9px; cursor: pointer;
 }
+.menubtn:hover { background: var(--mutedbg); color: var(--tx); }
+.menubtn svg { width: 18px; height: 18px; }
+
+/* 抽屉遮罩（桌面隐藏） */
+.scrim {
+  position: fixed; inset: 0; z-index: 110; background: rgba(12,12,14,.5);
+  opacity: 0; visibility: hidden; transition: opacity .2s ease, visibility .2s;
+  border: 0; padding: 0; cursor: pointer;
+}
+
+/* 表格横向滚动容器：列多的表在窄屏滚动，而不是把卡片撑破 */
+.tbwrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.tbwrap > table.tb { margin: 0; }
+
+/* 锚点跳转补偿：粘性顶栏会盖住目标，这里给跳转目标留出顶栏高度 */
+[id^="row-"], .sec, .mc[id], .row[id] { scroll-margin-top: calc(var(--topbar-h) + 12px); }
+.sec { scroll-margin-top: calc(var(--topbar-h) + 4px); }
+
+/* 按钮加载态（提交后禁用并转圈，避免重复点击） */
+.btn.loading { position: relative; color: transparent !important; pointer-events: none; }
+.btn.loading::after {
+  content: ""; position: absolute; width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid currentColor; border-top-color: transparent;
+  color: var(--tx2); animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 骨架屏（列表加载中占位，减少布局跳动） */
+.skel { background: linear-gradient(90deg, var(--line2) 25%, var(--line) 37%, var(--line2) 63%);
+  background-size: 400% 100%; animation: skel 1.3s ease infinite; border-radius: 6px; }
+@keyframes skel { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+
+/* ---------------------------------------------------------------- ≤900px（手机/竖屏平板） */
+@media (max-width: 900px) {
+  :root { --ctl-h: 40px; --topbar-h: 52px; }
+
+  /* ---- 导航：侧栏变为可开合的抽屉（原来直接 display:none，等于手机没法导航） ---- */
+  .menubtn { display: inline-flex; }
+  .side {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 120;
+    width: min(84vw, 300px); flex: none; height: 100vh;
+    transform: translateX(-103%); transition: transform .24s cubic-bezier(.4,0,.2,1),
+      visibility .24s;
+    box-shadow: var(--sh-3); border-right: 1px solid var(--line);
+    will-change: transform;
+    /* 收起时置为不可见：否则其中的链接仍可被 Tab 聚焦（焦点跑到看不见的菜单里） */
+    visibility: hidden;
+  }
+  html[data-nav="open"] .side { transform: none; visibility: visible; }
+  html[data-nav="open"] .scrim { opacity: 1; visibility: visible; }
+  html[data-nav="open"] { overflow: hidden; }        /* 抽屉打开时锁滚动 */
+  .nav a { padding: 10px 12px; font-size: 14px; }     /* 加大点击区域 */
+  .sidefoot { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+
+  /* ---- 触控目标 ---- */
+  .btn { min-height: var(--ctl-h); }
+  .btn.sm, .btn.xs { min-height: 34px; padding-inline: 10px; }
+  input[type=text], input[type=password], input[type=number], input[type=url], select {
+    min-height: var(--ctl-h);
+  }
+
+  /* 面包屑过长时省略号收尾，别把顶栏撑破 */
+  .topbar .crumb { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .topbar .crumb a, .topbar .crumb b { vertical-align: baseline; }
+
+  /* ---- 审核页：学生侧栏改为横向滑动条，行改为堆叠 ---- */
+  .rev { flex-direction: column; gap: 12px; }
+  .rev .side2 { width: 100%; position: static; }
+  .rev .side2 .card-b {
+    display: flex; gap: 7px; overflow-x: auto; padding: 9px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .rev .side2 .card-h { display: none; }
+  .rev .side2 .peer {
+    flex: none; white-space: nowrap; background: var(--card2);
+    border: 1px solid var(--line); padding: 7px 12px; border-radius: 20px;
+  }
+  .rev .side2 .peer.on { border-color: var(--accent); }
+  .rev .side2 .peer .sp { display: none; }
+
+  .row { display: grid; grid-template-columns: auto 1fr; gap: 8px 11px; padding: 12px 15px; }
+  .row .it { grid-column: 2; }
+  .row .th { grid-column: 2; width: 100%; max-width: 330px; }
+  .thumb img, .mc img { max-height: 200px; }
+  .mats, .sec, .tplbar { padding-left: 15px; padding-right: 15px; }
+
+  /* ---- Toast：窄屏贴边铺开，别溢出屏幕 ---- */
+  .toasts { left: 12px; right: 12px; top: 12px; }
+  .toast { min-width: 0; max-width: none; }
+
+  #fab { right: 14px; bottom: max(14px, env(safe-area-inset-bottom)); }
+}
+
+/* ---------------------------------------------------------------- ≤640px（手机竖屏） */
+@media (max-width: 640px) {
+  /* 带 data-label 的表格转卡片式：一行一条，标签在左、值在右，不用横向拖 */
+  table.tb.resp { display: block; }
+  table.tb.resp thead { display: none; }
+  table.tb.resp tbody { display: block; }
+  table.tb.resp tr {
+    display: block; border: 1px solid var(--line); border-radius: var(--r);
+    margin: 0 0 9px; background: var(--card); overflow: hidden;
+  }
+  table.tb.resp tr:last-child { margin-bottom: 0; }
+  table.tb.resp tr:hover td { background: transparent; }
+  table.tb.resp td {
+    display: block; padding: 8px 12px; border-bottom: 1px solid var(--line2);
+  }
+  table.tb.resp td:last-child { border-bottom: 0; }
+  /* 标签在上、内容在下：单元格里可能是多行内容（文件名 + 大小 + 时间），
+     用 flex 横排会把它们并排挤在一起，块级堆叠才稳妥。 */
+  table.tb.resp td::before {
+    content: attr(data-label); display: block; color: var(--tx3);
+    font-size: 11px; line-height: 1.5; margin-bottom: 1px;
+  }
+  table.tb.resp td.num, table.tb.resp td.tar { text-align: left; }
+  table.tb.resp td:not([data-label])::before { display: none; }
+  table.tb.resp td:not([data-label]) { padding-top: 4px; }
+
+  /* 未标注 data-label 的表格：退化为横向滚动，绝不撑破页面。
+     只在 .tbwrap 容器内强制最小宽度 —— 没有包裹的表格让它自然收缩，
+     否则会顶破卡片导致整页横向滚动（比列挤一点更糟）。 */
+  .tbwrap > table.tb:not(.resp) { min-width: 520px; }
+
+  /* 卡片式表格自带圆角边框，给紧贴容器的 .tight 留一点内边距，别顶到卡片边缘 */
+  .card-b.tight { padding: 10px; }
+
+  h1 { font-size: 18px; }
+  .stat .v { font-size: 22px; }
+  /* 内容面板（g2，如"左表单/右列表"）窄屏一律单列；
+     统计块（g4）本身很矮，两列并排比堆四行更好读 */
+  .g2, .g3 { grid-template-columns: 1fr; }
+  .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat { padding: 12px 13px; }
+  .card-h { padding: 12px 15px; }
+  .card-b { padding: 14px 15px; }
+  .auth .box { padding: 24px 20px 20px; border-radius: 14px; }
+
+  /* iOS 上输入框字号小于 16px，聚焦时会自动放大整页 —— 统一 16px 避免页面"跳一下" */
+  input[type=text], input[type=password], input[type=number], input[type=url],
+  select, textarea { font-size: 16px; }
+
+  /* 审核行内的操作按钮：换行更好点，不挤成一团 */
+  .row .it .flex.wrap .btn { min-height: 34px; }
+  .tplbar { gap: 5px; }
+}
+
+/* ---------------------------------------------------------------- 横屏矮屏（如手机横放） */
+@media (max-height: 520px) and (max-width: 900px) {
+  .side { height: 100vh; }
+  .nav .grp { padding-top: 10px; }
+}
+
 
 /* ---------------- 审核页：跳转定位 / 人工否定 ---------------- */
 .chip.jump { cursor: pointer; user-select: none; }
