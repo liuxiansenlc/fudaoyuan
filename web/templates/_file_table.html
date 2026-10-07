@@ -25,6 +25,8 @@
       <td class="num">{{ f.n_images }}</td>
       <td>
         {% if f.status == 'analyzed' %}<span class="chip c-ok">已出结论</span>
+        {% elif f.status == 'reading' %}<span class="chip c-blue hot">读取中…</span>
+        {% elif f.status == 'analyzing' %}<span class="chip c-blue hot">配对中…</span>
         {% elif f.status == 'uploaded' or f.status == 'parsed' %}<span class="chip c-muted">待运行</span>
         {% elif f.status == 'parse_failed' %}<span class="chip c-bad" title="{{ f.error }}">解析失败</span>
         {% elif f.status == 'analyze_failed' %}<span class="chip c-bad" title="{{ f.error }}">配对失败</span>

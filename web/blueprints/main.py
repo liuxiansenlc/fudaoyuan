@@ -249,6 +249,14 @@ def run_batch(bid):
     if running:
         return jsonify(ok=False, error='该批次已有任务在跑，请等它结束', task_id=running['id']), 409
 
+    # 清掉上次中断遗留的瞬态状态（读取中/配对中），避免清单显示卡住
+    if only:
+        db.ex("UPDATE files SET status='uploaded' WHERE id=? AND status IN ('reading','analyzing')",
+              (only,))
+    else:
+        db.ex("UPDATE files SET status='uploaded' WHERE batch_id=?"
+              " AND status IN ('reading','analyzing')", (bid,))
+
     if kind == 'analyze_only':
         tid = TS.enqueue('analyze', batch_id=bid, file_id=only,
                          payload={'file_id': only}, user_id=u['id'])

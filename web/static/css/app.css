@@ -299,6 +299,18 @@ table.tb td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .taskbar .ph { font-size: 12px; color: var(--tx2); min-width: 160px; }
 .taskbar .pc { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--tx2); }
 
+/* 任务元信息行：百分比 / 剩余时间倒计时 / 已用时间 / 启停开关 */
+.taskmeta { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  font-size: 12px; color: var(--tx2); font-variant-numeric: tabular-nums; }
+.taskmeta .big { font-size: 15px; font-weight: 600; color: var(--tx); }
+.taskmeta .eta { color: var(--accent-tx); font-weight: 600; }
+.taskmeta .eta.done { color: var(--ok); }
+.taskmeta .clock { color: var(--tx3); }
+.taskmeta .sp { flex: 1; }
+.chip.hot { animation: pulse 1.6s ease-in-out infinite; }
+.prog.paused > i { background: linear-gradient(90deg, var(--warn), #d98b2b); }
+.prog.paused { background: var(--warnbg); }
+
 /* ---------------------------------------------------------------- 提示条 */
 .note {
   font-size: 12px; color: var(--tx2); background: var(--card2);

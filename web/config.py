@@ -62,7 +62,8 @@ class WebConfig(object):
 
     # ---- 数据目录 ----
     DATA_DIR = DATA_DIR
-    DB_PATH = os.path.join(DATA_DIR, 'app.db')
+    # 允许用 WB_DB_PATH 指定数据库文件，便于测试用独立库、不碰线上数据
+    DB_PATH = os.environ.get('WB_DB_PATH') or os.path.join(DATA_DIR, 'app.db')
     UPLOAD_DIR = os.path.join(DATA_DIR, 'uploads')     # 上传的 docx / 参考表
     RESULT_DIR = os.path.join(DATA_DIR, 'results')     # 每个学生的分析结果 json
     EXPORT_DIR = os.path.join(DATA_DIR, 'exports')
@@ -91,6 +92,9 @@ class WebConfig(object):
     VISION_CONCURRENCY = 4                       # worker 内读图并发
     VISION_MAX_SIDE = 1600                       # 送模型前缩到长边 1600
     VISION_DAILY_LIMIT = 2000                    # 每日读图上限（成本闸门）
+    # 任务暂停的最长时长（秒）。超过后自动继续，防止"暂停后无人回来点继续"
+    # 把单线程 worker 永久占住、拖垮整个队列。默认 15 分钟。
+    TASK_MAX_PAUSE_SECONDS = int(os.environ.get('WB_MAX_PAUSE_SECONDS', '900'))
 
     # ---- 会话 ----
     SESSION_COOKIE_HTTPONLY = True

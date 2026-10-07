@@ -2,7 +2,7 @@
 """异步接口：任务进度轮询、人工审核动作、未认领图采纳。"""
 import os
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, render_template
 
 from ..config import WebConfig
 from .. import db
@@ -13,6 +13,20 @@ from ..services import engine_adapter as EA
 bp = Blueprint('api', __name__, url_prefix='/api')
 
 
+def _task_json(t):
+    """任务 → 前端 JSON。paused 存在 payload 里（部署零迁移）。"""
+    p = db.jloads(t.get('payload')) if t.get('payload') else {}
+    return {
+        'id': t['id'], 'kind': t['kind'], 'status': t['status'],
+        'phase': t['phase'], 'message': t['message'], 'error': t['error'],
+        'done': t['progress_done'], 'total': t['progress_total'],
+        'percent': (round(100.0 * t['progress_done'] / t['progress_total'], 1)
+                    if t['progress_total'] else (100 if t['status'] == 'done' else 0)),
+        'paused': bool((p or {}).get('paused')),
+        'started_at': t.get('started_at'), 'created_at': t.get('created_at'),
+    }
+
+
 # ------------------------------------------------------------------ 任务
 @bp.route('/tasks/<int:tid>')
 @login_required
@@ -20,28 +34,24 @@ def task_status(tid):
     t = TS.get(tid)
     if not t:
         return jsonify(ok=False, error='任务不存在'), 404
-    return jsonify(ok=True, task={
-        'id': t['id'], 'kind': t['kind'], 'status': t['status'],
-        'phase': t['phase'], 'message': t['message'], 'error': t['error'],
-        'done': t['progress_done'], 'total': t['progress_total'],
-        'percent': (round(100.0 * t['progress_done'] / t['progress_total'], 1)
-                    if t['progress_total'] else (100 if t['status'] == 'done' else 0)),
-    })
+    return jsonify(ok=True, task=_task_json(t))
 
 
 @bp.route('/batches/<int:bid>/tasks')
 @login_required
 def batch_tasks(bid):
     rows = db.q_dict('SELECT * FROM tasks WHERE batch_id=? ORDER BY id DESC LIMIT 20', (bid,))
-    out = []
-    for t in rows:
-        out.append({'id': t['id'], 'kind': t['kind'], 'status': t['status'],
-                    'phase': t['phase'], 'message': t['message'], 'error': t['error'],
-                    'done': t['progress_done'], 'total': t['progress_total'],
-                    'percent': (round(100.0 * t['progress_done'] / t['progress_total'], 1)
-                                if t['progress_total'] else (100 if t['status'] == 'done' else 0)),
-                    'created_at': t['created_at']})
+    out = [_task_json(t) for t in rows]
     return jsonify(ok=True, tasks=out, files=_files_brief(bid))
+
+
+@bp.route('/batches/<int:bid>/files_table')
+@login_required
+def batch_files_table(bid):
+    """返回材料清单表格的 HTML，供"运行中实时刷新清单状态"用。"""
+    files = db.q_dict('SELECT * FROM files WHERE batch_id=? ORDER BY id', (bid,))
+    html = render_template('_file_table.html', files=files)
+    return jsonify(ok=True, html=html, count=len(files))
 
 
 def _files_brief(bid):
@@ -62,6 +72,24 @@ def _files_brief(bid):
 def task_cancel(tid):
     TS.cancel(tid)
     return jsonify(ok=True)
+
+
+@bp.route('/tasks/<int:tid>/pause', methods=['POST'])
+@login_required
+def task_pause(tid):
+    ok = TS.pause(tid)
+    if not ok:
+        return jsonify(ok=False, error='任务不在运行中，无法暂停'), 400
+    return jsonify(ok=True, paused=True)
+
+
+@bp.route('/tasks/<int:tid>/resume', methods=['POST'])
+@login_required
+def task_resume(tid):
+    ok = TS.resume(tid)
+    if not ok:
+        return jsonify(ok=False, error='任务不在运行中，无法继续'), 400
+    return jsonify(ok=True, paused=False)
 
 
 # ------------------------------------------------------------------ 审核动作

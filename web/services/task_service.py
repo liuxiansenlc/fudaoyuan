@@ -80,8 +80,35 @@ def finish(task_id, status='done', error=''):
 
 
 def cancel(task_id):
-    db.ex("UPDATE tasks SET status='canceled', finished_at=? WHERE id=? AND status IN ('queued',)",
+    """取消任务。running 的任务由处理器在每个处理单元前调用 api.wait_if_paused()
+    检测到 canceled 后主动退出；queued 的直接改状态。"""
+    db.ex("UPDATE tasks SET status='canceled', finished_at=?, claimed_by=''"
+          " WHERE id=? AND status IN ('queued','running')",
           (db.utcnow(), task_id))
+
+
+def set_paused(task_id, paused):
+    """
+    暂停 / 继续。状态存在 payload 里（而不是新加数据库列），
+    这样部署到线上不用做表结构迁移，风险最小。
+    返回 True 表示状态已改变。
+    """
+    t = get(task_id)
+    if not t or t['status'] not in ('queued', 'running'):
+        return False
+    p = db.jloads(t['payload'])
+    p['paused'] = bool(paused)
+    db.ex('UPDATE tasks SET payload=? WHERE id=?',
+          (json.dumps(p, ensure_ascii=False), task_id))
+    return True
+
+
+def pause(task_id):
+    return set_paused(task_id, True)
+
+
+def resume(task_id):
+    return set_paused(task_id, False)
 
 
 def claim_next(worker_id=WORKER_ID):
@@ -117,7 +144,7 @@ def run_task(task):
         finish(task['id'], 'failed', '未知任务类型：%s' % kind)
         return
     try:
-        fn(task, Sys())
+        fn(task, Sys(task['id']))
         if get(task['id'])['status'] == 'running':
             finish(task['id'], 'done')
     except Exception as e:
@@ -126,21 +153,68 @@ def run_task(task):
 
 
 class Sys(object):
-    """处理器拿它来上报进度、判断是否被取消。"""
+    """
+    处理器拿它来上报进度、判断是否被暂停/取消。
+
+    任务 id 由实例持有（而不是模块级全局 `_cur`）：这样同一进程里
+    即便有多个执行体（内嵌 worker + 测试手动调用），也各报各的进度，
+    不会互相串味——踩过"全局 _cur 被并发改写导致进度/暂停判错"的坑。
+    """
+    def __init__(self, task_id=None):
+        self.task_id = task_id if task_id is not None else _cur
+
     def set_total(self, n, phase=None, message=None):
-        bump(_cur, total=n, phase=phase, message=message)
+        bump(self.task_id, total=n, phase=phase, message=message)
 
     def step(self, n=1, phase=None, message=None):
-        t = get(_cur)
-        bump(_cur, done=(t['progress_done'] + n), phase=phase, message=message)
+        t = get(self.task_id)
+        bump(self.task_id, done=(t['progress_done'] + n), phase=phase, message=message)
 
     def phase(self, phase, message=None):
-        bump(_cur, phase=phase, message=message)
+        bump(self.task_id, phase=phase, message=message)
 
     def canceled(self):
-        return get(_cur)['status'] == 'canceled'
+        return get(self.task_id)['status'] == 'canceled'
+
+    def paused(self):
+        t = get(self.task_id)
+        if t['status'] == 'canceled':
+            return False
+        return bool(db.jloads(t['payload']).get('paused'))
+
+    def wait_if_paused(self):
+        """
+        被暂停时在此阻塞等待，直到「继续」或「取消」。
+        返回 True = 可以继续处理；False = 任务已被取消，处理器应当立即退出。
+        处理单元（每个文件 / 每张图）开始前调用一次，即可实现"暂停不丢进度"。
+
+        安全阀：worker 是单线程顺序跑的，若任务一直暂停、又没人回来点「继续」，
+        会把整个队列堵死。所以暂停超过 TASK_MAX_PAUSE_SECONDS 后自动继续。
+        """
+        max_seconds = int(getattr(WebConfig, 'TASK_MAX_PAUSE_SECONDS', 900) or 900)
+        waited = 0.0
+        announced = False
+        while True:
+            t = get(self.task_id)
+            if t['status'] == 'canceled':
+                return False
+            if not db.jloads(t['payload']).get('paused'):
+                if announced:
+                    bump(self.task_id, phase='继续处理中', message='')
+                return True
+            if not announced:
+                bump(self.task_id, phase='已暂停', message='任务已暂停，点「继续」恢复')
+                announced = True
+            time.sleep(0.6)
+            waited += 0.6
+            if waited >= max_seconds:
+                set_paused(self.task_id, False)
+                bump(self.task_id, phase='继续处理中',
+                     message='暂停已超过 %d 分钟，自动继续' % (max_seconds // 60))
+                return True
 
 
+# 兼容保留：旧代码/测试若直接引用 _cur，仍能用；新代码请用 Sys(task_id)
 _cur = None
 
 
@@ -169,6 +243,10 @@ def loop_forever(sleep=2.0, worker_id=WORKER_ID):
 
 
 # ------------------------------------------------------------------ 内置处理器
+# 取消哨兵：worker 在"已被取消"时返回它，主循环据此停止后续处理。
+_CANCELED = '__canceled__'
+
+
 @handler('read_images')
 def _h_read_images(task, api):
     """读图：把批次里所有没读过的图送去视觉模型，写回缓存。"""
@@ -219,15 +297,27 @@ def _h_read_images(task, api):
     if len(todo) > quota_left:
         todo = todo[:quota_left]
 
+    # 进入读图阶段：把本批次（或指定文件）标为「读取中」，让材料清单实时反映进度
+    if only_file:
+        db.ex("UPDATE files SET status='reading' WHERE id=? AND status<>'analyzed'",
+              (only_file,))
+    else:
+        db.ex("UPDATE files SET status='reading' WHERE batch_id=? AND status<>'analyzed'",
+              (task['batch_id'],))
+
     done = [0]
     failed = []
     mask_log = []
     lock = threading.Lock()
+    canceled = [False]
 
     from . import privacy as PV
     masking = PV.enabled()
 
     def work(item):
+        # 每张图读之前先看是否被暂停/取消 —— 保证「暂停不丢进度」
+        if not api.wait_if_paused():
+            return item, None, _CANCELED, []
         try:
             data = EA.read_image_bytes(item['docx'], item['media'])
         except Exception as e:
@@ -243,6 +333,11 @@ def _h_read_images(task, api):
         futs = {pool.submit(work, it): it for it in todo}
         for fu in as_completed(futs):
             item, obj, err, hits = fu.result()
+            if err == _CANCELED:
+                canceled[0] = True
+                for x in futs:
+                    x.cancel()
+                continue
             with lock:
                 done[0] += 1
                 if obj:
@@ -261,6 +356,13 @@ def _h_read_images(task, api):
                                    'sha256': item['sha256'], 'error': err})
                     api.step(1, phase='读图中（有失败）',
                              message='失败：%s · %s' % (item['student'], item['file']))
+
+    if canceled[0]:
+        # 被取消：把"读取中"的文件退回"待运行"，避免清单显示卡住
+        db.ex("UPDATE files SET status='uploaded' WHERE batch_id=? AND status='reading'",
+              (task['batch_id'],))
+        api.phase('已取消', '任务已取消')
+        return
 
     if failed:
         p = os.path.join(WebConfig.LOG_DIR, 'read_failed_%s.json' % task['id'])
@@ -300,10 +402,23 @@ def _h_analyze(task, api):
                   message='A类竞赛 %d 条 / 成绩表 %d 条学号'
                           % (ref['meta']['competition_n'], ref['meta']['ranking_n']))
 
+    # 清掉上次中断遗留的瞬态状态，避免清单一直显示"读取中/配对中"
+    if only_file:
+        db.ex("UPDATE files SET status='uploaded' WHERE id=? AND status IN ('reading','analyzing')",
+              (only_file,))
+    else:
+        db.ex("UPDATE files SET status='uploaded' WHERE batch_id=?"
+              " AND status IN ('reading','analyzing')", (task['batch_id'],))
+
     ok, bad = 0, 0
     for f in files:
-        if api.canceled():
+        if not api.wait_if_paused():
+            # 被取消：把当前文件退回"待运行"
+            db.ex("UPDATE files SET status='uploaded' WHERE id=? AND status='analyzing'",
+                  (f['id'],))
+            api.phase('已取消', '任务已取消')
             return
+        db.ex("UPDATE files SET status='analyzing' WHERE id=?", (f['id'],))
         try:
             rec = EA.analyze_one(f['stored_path'], ref, cfg, file_id=f['id'])
             EA.save_result(f['id'], rec)
@@ -350,6 +465,9 @@ def _h_export(task, api):
     api.set_total(len(files), phase='导出中', message='共 %d 份' % len(files))
     made, failed = [], []
     for f in files:
+        if not api.wait_if_paused():
+            api.phase('已取消', '任务已取消')
+            return
         rec = EA.load_result(f['id'])
         if not rec:
             failed.append((f['student_name'], '没有分析结果'))

@@ -82,6 +82,14 @@
         <span class="pc" id="tkCount"></span>
       </div>
       <div class="prog" id="tkBar"><i></i></div>
+      <div class="taskmeta mt12">
+        <span class="big" id="tkPct">0%</span>
+        <span class="eta" id="tkEta">预计剩余 --:--</span>
+        <span class="clock" id="tkElapsed">已用 00:00</span>
+        <div class="sp"></div>
+        <button class="btn xs" id="btnPause" onclick="togglePause()">暂停</button>
+        <button class="btn xs danger" id="btnStop" onclick="stopTask()">停止</button>
+      </div>
       <div class="small mut2 mt6" id="tkMsg"></div>
     </div>
     <div id="runIdle">
@@ -190,28 +198,141 @@ function runBatch(kind) {
     });
 }
 
+/* ---------------- 任务进度：实时进度条 + 剩余时间倒计时 + 启停 ---------------- */
+var CUR_TID = null;
+var ETA = { t0: 0, lastDone: 0, lastT: 0, speed: 0, total: 0 };
+var fileTimer = null;
+
+function fmtClock(sec) {
+  sec = Math.max(0, Math.round(sec));
+  var m = Math.floor(sec / 60), s = sec % 60;
+  return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+}
+
+function resetEta(t) {
+  // 用服务端记录的真实开始时间估算，页面中途刷新也能算准
+  var absT0 = Date.now();
+  if (t.started_at) {
+    var d = new Date(String(t.started_at).replace(' ', 'T') + 'Z');
+    if (!isNaN(d.getTime())) absT0 = d.getTime();
+  }
+  ETA.t0 = absT0;
+  ETA.lastDone = t.done || 0;
+  ETA.lastT = Date.now();
+  ETA.total = t.total || 0;
+  var el = (Date.now() - absT0) / 1000;
+  ETA.speed = (el > 1 && t.done) ? (t.done / el) : 0;   // 先用总体平均速率给个初值
+}
+
+function updateEta(t) {
+  if (!ETA.t0) resetEta(t);
+  if (t.total) ETA.total = t.total;
+  var now = Date.now();
+  var dn = (t.done || 0) - ETA.lastDone;
+  var dt = (now - ETA.lastT) / 1000;
+  if (dt > 0 && dn >= 0) {
+    var inst = dn / dt;                                  // 本次采样速率
+    ETA.speed = ETA.speed ? (ETA.speed * 0.7 + inst * 0.3) : inst;
+  }
+  ETA.lastDone = t.done || 0;
+  ETA.lastT = now;
+
+  var el = document.getElementById('tkElapsed');
+  if (el) el.textContent = '已用 ' + fmtClock((now - ETA.t0) / 1000);
+
+  var etaEl = document.getElementById('tkEta');
+  if (!etaEl) return;
+  etaEl.className = 'eta';
+  if (t.status === 'done') { etaEl.textContent = '已完成'; etaEl.className = 'eta done'; return; }
+  if (t.status === 'canceled') { etaEl.textContent = '已停止'; return; }
+  if (t.paused) { etaEl.textContent = '已暂停'; return; }
+  if (!ETA.total || !t.done) { etaEl.textContent = '预计剩余 --:--'; return; }
+  var remain = ETA.total - (t.done || 0);
+  if (remain <= 0) { etaEl.textContent = '即将完成…'; return; }
+  etaEl.textContent = ETA.speed > 0.0001 ? ('预计剩余 ' + fmtClock(remain / ETA.speed))
+                                         : '预计剩余 计算中…';
+}
+
+function renderTask(t) {
+  var bar = document.getElementById('tkBar');
+  bar.classList.toggle('done', t.status === 'done');
+  bar.classList.toggle('fail', t.status === 'failed');
+  bar.classList.toggle('paused', !!t.paused);
+  bar.querySelector('i').style.width = (t.percent || 0) + '%';
+  document.getElementById('tkKind').textContent =
+    { read_images: '读图 + 出结论', analyze: '配对出结论', export: '导出 Word' }[t.kind] || t.kind;
+  document.getElementById('tkPhase').textContent =
+    t.status === 'failed' ? '任务失败'
+      : (t.status === 'canceled' ? '已停止'
+        : (t.paused ? '已暂停' : (t.phase || '处理中')));
+  document.getElementById('tkCount').textContent = t.total ? (t.done + ' / ' + t.total) : '';
+  document.getElementById('tkPct').textContent =
+    (t.total ? (t.percent || 0).toFixed(0) : (t.status === 'done' ? 100 : 0)) + '%';
+  document.getElementById('tkMsg').textContent = t.error || t.message || '';
+
+  var running = (t.status === 'running' || t.status === 'queued');
+  var bp = document.getElementById('btnPause');
+  if (bp) { bp.classList.toggle('hide', !running); bp.textContent = t.paused ? '继续' : '暂停'; }
+  var bs = document.getElementById('btnStop');
+  if (bs) bs.classList.toggle('hide', !running);
+  updateEta(t);
+}
+
+/* 材料清单实时刷新：运行中每 1.5s 拉一次清单 HTML，状态随处理进度更新 */
+function refreshFiles() {
+  wbApi('/api/batches/' + BID + '/files_table').then(function (j) {
+    if (!j.ok) return;
+    var wrap = document.getElementById('fileWrap');
+    if (wrap) wrap.innerHTML = j.html;
+    var fc = document.getElementById('fileCount');
+    if (fc) fc.textContent = j.count + ' 份';
+  });
+}
+function startFilePoll() { if (!fileTimer) fileTimer = setInterval(refreshFiles, 1500); }
+function stopFilePoll() { if (fileTimer) { clearInterval(fileTimer); fileTimer = null; } }
+
 function watch(tid) {
+  CUR_TID = tid;
   document.getElementById('taskPanel').classList.remove('hide');
   document.getElementById('runIdle').classList.add('hide');
   if (stopPoll) stopPoll();
+  startFilePoll();
   stopPoll = wbPoll(tid, function (t) {
-    var bar = document.getElementById('tkBar');
-    bar.classList.toggle('done', t.status === 'done');
-    bar.classList.toggle('fail', t.status === 'failed');
-    bar.querySelector('i').style.width = (t.percent || 0) + '%';
-    document.getElementById('tkKind').textContent =
-      { read_images: '读图 + 出结论', analyze: '配对出结论', export: '导出 Word' }[t.kind] || t.kind;
-    document.getElementById('tkPhase').textContent = t.phase || '处理中';
-    document.getElementById('tkCount').textContent = t.total ? (t.done + ' / ' + t.total) : '';
-    document.getElementById('tkMsg').textContent = t.error || t.message || '';
+    renderTask(t);
   }, function (t) {
+    renderTask(t);
+    stopFilePoll();
+    refreshFiles();
     if (t.status === 'done') {
       wbToast('完成', 'ok');
       if (t.kind === 'export') { showDownload(t.id); return; }
-      setTimeout(function () { location.reload(); }, 800);
+      setTimeout(function () { location.reload(); }, 900);
     } else if (t.status === 'failed') {
       wbToast('任务失败：' + (t.error || ''), 'bad', 6000);
+    } else if (t.status === 'canceled') {
+      wbToast('任务已停止，已完成的进度保留', 'warn');
     }
+  });
+}
+
+function togglePause() {
+  if (!CUR_TID) return;
+  var bp = document.getElementById('btnPause');
+  var wantResume = bp && bp.textContent === '继续';
+  wbApi('/api/tasks/' + CUR_TID + (wantResume ? '/resume' : '/pause'), { method: 'POST' })
+    .then(function (j) {
+      if (!j.ok) { wbToast(j.error || '操作失败', 'bad'); return; }
+      wbToast(wantResume ? '已继续处理' : '已暂停', 'ok');
+      if (bp) bp.textContent = wantResume ? '暂停' : '继续';
+    });
+}
+
+function stopTask() {
+  if (!CUR_TID) return;
+  if (!confirm('停止当前任务？已完成的进度会保留。')) return;
+  wbApi('/api/tasks/' + CUR_TID + '/cancel', { method: 'POST' }).then(function (j) {
+    if (!j.ok) { wbToast(j.error || '操作失败', 'bad'); return; }
+    wbToast('已请求停止，正在收尾…', 'warn');
   });
 }
 
@@ -238,15 +359,21 @@ function showDownload(tid) {
 function resumeTasks() {
   wbApi('/api/batches/' + BID + '/tasks').then(function (j) {
     if (!j.ok) return;
-    var running = j.tasks.filter(function (t) { return t.status === 'running' || t.status === 'queued'; })[0];
+    var running = j.tasks.filter(function (t) {
+      return t.status === 'running' || t.status === 'queued';
+    })[0];
     if (running) { watch(running.id); return; }
     var last = j.tasks[0];
-    if (last && last.status === 'failed') {
+    if (last && (last.status === 'failed' || last.status === 'canceled')) {
       document.getElementById('taskPanel').classList.remove('hide');
       document.getElementById('runIdle').classList.add('hide');
-      document.getElementById('tkBar').classList.add('fail');
-      document.getElementById('tkPhase').textContent = '上次任务失败';
+      var bar = document.getElementById('tkBar');
+      bar.classList.add(last.status === 'failed' ? 'fail' : 'done');
+      document.getElementById('tkPhase').textContent =
+        last.status === 'failed' ? '上次任务失败' : '上次任务已停止';
       document.getElementById('tkMsg').textContent = last.error || '';
+      document.getElementById('btnPause').classList.add('hide');
+      document.getElementById('btnStop').classList.add('hide');
     }
   });
 }
