@@ -494,6 +494,11 @@ def _h_export(task, api):
             failed.append((f['student_name'], '%s: %s' % (type(e).__name__, e)))
             api.step(1, message='失败：%s' % f['student_name'])
 
+    # 一份都没导出成功 → 明确报错，绝不交出空 zip 让用户去猜
+    if not made:
+        why = '；'.join('%s：%s' % (a, b) for a, b in failed[:3]) or '未知原因'
+        raise RuntimeError('导出失败：没有任何材料成功导出。%s' % why)
+
     # 单个学生 → 直接给 docx；整批次 → 打包 zip
     if kind == 'file' and len(made) == 1:
         final = made[0]

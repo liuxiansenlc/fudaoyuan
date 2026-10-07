@@ -73,9 +73,13 @@ class WebConfig(object):
     # ---- 引擎缓存：沿用仓库里已有的 cache/，这样 187 张已读图立刻复用 ----
     ENGINE_CACHE_DIR = os.path.join(REPO_ROOT, 'cache')
     RULES_FILE = os.path.join(ENGINE_DIR, 'rules_builtin.json')
-    TEMPLATE_DOCX = os.path.join(
-        r'D:/浏览器下载/Desktop/2.【班级汇总】国家奖学金各班级申报材料',
-        'xx班xx国家奖学金申请支撑材料 - 模板.docx')
+
+    # 导出标准化 Word 的默认模板。
+    # ★ 必须用**仓库内相对路径**：早先写死成开发机的 D:/... 绝对路径，
+    #   服务器上根本不存在，导致每份导出都失败、最后打包出一个空 zip。
+    #   可用 WB_TEMPLATE_DOCX 覆盖；各奖学金项目还可在界面上传自己的模板（优先级更高）。
+    TEMPLATE_DOCX = os.environ.get('WB_TEMPLATE_DOCX') or os.path.join(
+        ENGINE_DIR, 'assets', 'template.docx')
 
     # ---- 上传 ----
     ALLOWED_DOCX = {'.docx'}

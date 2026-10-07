@@ -99,14 +99,64 @@ def _clean_text(t):
 
 
 def _blank_document(template_path):
-    """打开模板并清空正文，保留 sectPr（页面设置挂在它上面）。"""
-    doc = Document(template_path)
+    """
+    打开模板并清空正文，保留 sectPr（页面设置挂在它上面）。
+
+    模板找不到时**不抛异常**：改用 python-docx 新建一份并手工设好 A4 版式。
+    踩过的坑：早期模板路径写死在开发机上，服务器上不存在 → 每份导出都失败
+    → 打成空 zip 给用户。这里做兜底，保证"就算模板丢了也能导出"。
+    """
+    doc = None
+    if template_path and os.path.exists(template_path):
+        try:
+            doc = Document(template_path)
+        except Exception:
+            doc = None
+    if doc is None:
+        return _minimal_document()
     body = doc.element.body
     sect = body.find(qn('w:sectPr'))
     for child in list(body):
         if child is not sect:
             body.remove(child)
     return doc
+
+
+def _minimal_document():
+    """无模板兜底：A4 + 上下 2.54cm / 左右 3.17cm，与模板版式对齐。"""
+    doc = Document()
+    sec = doc.sections[0]
+    sec.page_width = Cm(21.0)
+    sec.page_height = Cm(29.7)
+    sec.top_margin = Cm(2.54)
+    sec.bottom_margin = Cm(2.54)
+    sec.left_margin = Cm(3.17)
+    sec.right_margin = Cm(3.17)
+    body = doc.element.body
+    for child in list(body):
+        if child.tag != qn('w:sectPr'):
+            body.remove(child)
+    return doc
+
+
+def resolve_template(given=None):
+    """
+    按优先级找一份可用的模板：调用方指定 → 配置默认 → 仓库内置 → 数据目录。
+    都不在就返回 None（调用方会走 _minimal_document 兜底）。
+    """
+    cands = [
+        given,
+        getattr(WebConfig, 'TEMPLATE_DOCX', None),
+        os.path.join(getattr(WebConfig, 'ENGINE_DIR', ''), 'assets', 'template.docx'),
+        os.path.join(getattr(WebConfig, 'DATA_DIR', ''), 'templates', 'default.docx'),
+    ]
+    seen = set()
+    for c in cands:
+        if c and c not in seen:
+            seen.add(c)
+            if os.path.exists(c):
+                return c
+    return None
 
 
 # ------------------------------------------------------------------ 图片
@@ -152,9 +202,7 @@ def build_docx(view, out_path, template=None, include_pending=True,
     reject_mode: 'remove' 剔除人工否定项 / 'mark' 保留并标注；不传则用 view 里的
     返回 (out_path, stats)
     """
-    template = template or WebConfig.TEMPLATE_DOCX
-    if not os.path.exists(template):
-        raise FileNotFoundError('模板不存在：%s' % template)
+    template = resolve_template(template or WebConfig.TEMPLATE_DOCX)
 
     doc = _blank_document(template)
     # ★ 板块顺序与名称**直接沿用审核页渲染出来的那份**（view['sections']），不再自己重算。
