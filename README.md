@@ -278,7 +278,7 @@ pip install -r requirements.txt
 python wsgi.py                 # → http://127.0.0.1:8000
 ```
 
-首次启动自动建管理员 **admin / admin123**（登录后请立即改）。
+首次启动自动建管理员 **admin / 123456**（登录后请立即改）。
 
 ## 宝塔 / Linux 部署
 

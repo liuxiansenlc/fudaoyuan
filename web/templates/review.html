@@ -10,7 +10,8 @@
 
 {% macro mat_card(c, key) %}
 <div class="mc" data-jump="left" data-sha="{{ c.sha }}">
-  <img src="{{ c.url }}" loading="lazy" onclick="zoom(this)" alt="{{ c.summary }}">
+  <img src="{{ c.url }}" loading="lazy" onclick="zoom(this)" alt="{{ c.summary }}"
+       tabindex="0" role="button" aria-label="查看大图：{{ c.summary }}">
 
   {% if c.suggest_ok %}
   <div class="sug">建议补写奖项名：{ {{ c.suggest_award }} }</div>
@@ -43,7 +44,7 @@
       采纳为条目</button>
   </div>
   {% if c.note %}
-  <details class="acc"><summary></summary><div class="det">{{ c.note }}</div></details>
+  <details class="acc"><summary><span class="sr-only">展开</span>详情</summary><div class="det">{{ c.note }}</div></details>
   {% endif %}
 </div>
 {% endmacro %}
@@ -85,26 +86,26 @@
           </div>
           <div class="sp"></div>
           <div class="flex wrap" style="gap:7px">
-            <span class="chip c-ok jump" onclick="jumpTo('auto')"
-                  title="点击跳到已确定的第一条（再点跳到下一条）">直接给结论 {{ v.stats.auto }}</span>
-            <span class="chip c-warn jump {{ 'hot' if v.stats.need }}" onclick="jumpTo('need')"
-                  title="点击跳到需要你判断的条目">需判断 {{ v.stats.need }}</span>
-            <span class="chip c-bad jump {{ 'hot' if v.stats.miss }}" onclick="jumpTo('miss')"
-                  title="点击跳到缺图/姓名异常的条目">缺图 {{ v.stats.miss }}</span>
+            <button type="button" class="chip c-ok jump" onclick="jumpTo('auto')"
+                  title="点击跳到已确定的第一条（再点跳到下一条）">直接给结论 {{ v.stats.auto }}</button>
+            <button type="button" class="chip c-warn jump {{ 'hot' if v.stats.need }}" onclick="jumpTo('need')"
+                  title="点击跳到需要你判断的条目">需判断 {{ v.stats.need }}</button>
+            <button type="button" class="chip c-bad jump {{ 'hot' if v.stats.miss }}" onclick="jumpTo('miss')"
+                  title="点击跳到缺图/姓名异常的条目">缺图 {{ v.stats.miss }}</button>
             {% if v.stats.declared %}
-            <span class="chip c-muted jump" onclick="jumpTo('declared')">声明无材料 {{ v.stats.declared }}</span>
+            <button type="button" class="chip c-muted jump" onclick="jumpTo('declared')">声明无材料 {{ v.stats.declared }}</button>
             {% endif %}
             {% if v.stats.rejected %}
-            <span class="chip c-bad jump" onclick="jumpTo('rej')"
-                  title="人工否定的条目：不写入导出材料（可改回）">人工否定 {{ v.stats.rejected }}</span>
+            <button type="button" class="chip c-bad jump" onclick="jumpTo('rej')"
+                  title="人工否定的条目：不写入导出材料（可改回）">人工否定 {{ v.stats.rejected }}</button>
             {% endif %}
             {% if v.stats.left %}
-            <span class="chip c-acc jump {{ 'hot' if v.stats.left }}" onclick="jumpTo('left')"
-                  title="点击跳到未认领的图片">未认领图 {{ v.stats.left }}</span>
+            <button type="button" class="chip c-acc jump {{ 'hot' if v.stats.left }}" onclick="jumpTo('left')"
+                  title="点击跳到未认领的图片">未认领图 {{ v.stats.left }}</button>
             {% endif %}
             {% if v.stats.adopted %}
-            <span class="chip c-ok jump" onclick="jumpTo('adopted')"
-                  title="点击跳到人工采纳的条目">人工采纳 {{ v.stats.adopted }}</span>
+            <button type="button" class="chip c-ok jump" onclick="jumpTo('adopted')"
+                  title="点击跳到人工采纳的条目">人工采纳 {{ v.stats.adopted }}</button>
             {% endif %}
           </div>
 
@@ -127,7 +128,9 @@
         <div class="flex wrap mt12" style="gap:18px">
           <div style="flex:1;min-width:220px">
             <div class="small mut2 mb6">系统自动判定覆盖率</div>
-            <div class="prog"><i style="width:{{ v.stats.rate }}%;background:var(--ok)"></i></div>
+            <div class="prog" role="progressbar" aria-valuenow="{{ v.stats.rate }}"
+                 aria-valuemin="0" aria-valuemax="100"
+                 aria-label="系统自动判定覆盖率 {{ v.stats.rate }}%"><i style="width:{{ v.stats.rate }}%;background:var(--ok)"></i></div>
             <div class="mut small mt6">{{ v.stats.rate }}% 的条目系统能直接给结论（{{ v.stats.auto }}/{{ v.stats.n_items }}）</div>
           </div>
           <div style="flex:1;min-width:220px">
@@ -167,7 +170,7 @@
     <div class="card">
       <div class="card-b" style="padding:11px 16px">
         <div class="flex wrap">
-          <label class="flex" style="gap:6px;cursor:pointer">
+          <label class="flex" for="chkAll" style="gap:6px;cursor:pointer">
             <input type="checkbox" id="chkAll" onchange="toggleAll(this)">
             <span class="small">全选待确认</span>
           </label>
@@ -288,12 +291,13 @@
           {% if r.img %}
           <div class="thumb {{ 'rej' if r.status == 'rejected' else '' }}">
             <img src="{{ r.img.url }}" loading="lazy" onclick="zoom(this)"
-                 alt="{{ r.img.summary }}" title="{{ r.img.summary }}">
+                 alt="{{ r.img.summary }}" title="{{ r.img.summary }}"
+                 tabindex="0" role="button" aria-label="查看大图：{{ r.img.summary }}">
             {% if r.status == 'rejected' %}<div class="badge">人工否定</div>{% endif %}
             <div class="cap">{{ r.img.summary or r.img.file }}</div>
           </div>
           <details class="acc">
-            <summary></summary>
+            <summary><span class="sr-only">展开</span>详情</summary>
             <div class="det">
               <div class="kv"><i>类型</i><span>{{ r.img.kind_label }}{% if r.img.size %} · {{ r.img.size }}{% endif %}</span></div>
               {% if r.img.issuer %}<div class="kv"><i>落款</i><span>{{ r.img.issuer }}</span></div>{% endif %}
@@ -351,13 +355,14 @@
 </div>
 
 {# ---------- 采纳弹窗 ---------- #}
-<div id="adopt" class="lb" style="background:rgba(0,0,0,.5);place-items:center">
+<div id="adopt" class="lb" style="background:rgba(0,0,0,.5);place-items:center"
+     role="dialog" aria-modal="true" aria-labelledby="adTitle">
   <div class="card" style="max-width:460px;width:100%;background:var(--card)" onclick="event.stopPropagation()">
     <div class="card-h"><h2 id="adTitle">采纳为一条奖项</h2></div>
     <div class="card-b">
-      <label class="fld"><span>奖项名称</span>
+      <label class="fld" for="adName"><span>奖项名称</span>
         <input type="text" id="adName"></label>
-      <label class="fld"><span>归入板块</span>
+      <label class="fld" for="adSec"><span>归入板块</span>
         <select id="adSec">
           <option value="">— 按图片识别结果自动归类 —</option>
           {% for s in adopt_sections %}

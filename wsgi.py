@@ -27,7 +27,7 @@ if __name__ == '__main__':
         from waitress import serve
         print('=' * 58)
         print('  奖学金审核工作台  →  http://%s:%d' % (host, port))
-        print('  首次登录：admin / admin123（请登录后立即修改）')
+        print('  首次登录：admin / 123456（请登录后立即修改）')
         print('=' * 58)
         serve(app, host=host, port=port, threads=8)
     except ImportError:

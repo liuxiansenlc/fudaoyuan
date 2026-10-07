@@ -31,7 +31,7 @@ def clean(h):
 with app.test_client() as c:
     tok = re.search(r'name="csrf-token" content="([^"]+)"',
                     c.get('/login').get_data(as_text=True)).group(1)
-    c.post('/login', data={'username': 'admin', 'password': 'admin123', '_csrf': tok})
+    c.post('/login', data={'username': 'admin', 'password': '123456', '_csrf': tok})
     row = db.q_dict("SELECT * FROM files WHERE student_name=? AND status='analyzed'",
                     (TARGET,), one=True)
     if not row:

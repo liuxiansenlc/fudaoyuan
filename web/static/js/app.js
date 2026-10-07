@@ -58,6 +58,8 @@
     if (!box) { console.log(msg); return; }
     var el = document.createElement('div');
     el.className = 'toast ' + (kind || '');
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
     el.textContent = msg;
     box.appendChild(el);
     setTimeout(function () {
@@ -71,13 +73,45 @@
   window.zoom = function (el) {
     var lb = document.getElementById('lb');
     var img = document.getElementById('lbImg');
+    var cap = document.getElementById('lbCap');
     img.src = el.src;
+    img.alt = el.getAttribute('alt') || '';
+    if (cap) cap.textContent = el.getAttribute('alt') || '';
     lb.classList.add('on');
+    // 焦点管理：聚焦关闭按钮，Escape/关闭时回到原图
+    lb._returnFocus = el;
+    var x = lb.querySelector('.x');
+    if (x) x.focus();
+  };
+  window.closeLb = function () {
+    var lb = document.getElementById('lb');
+    if (!lb.classList.contains('on')) return;
+    lb.classList.remove('on');
+    var back = lb._returnFocus;
+    if (back && back.focus) back.focus();
   };
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') {
-      var lb = document.getElementById('lb');
-      if (lb) lb.classList.remove('on');
+    if (e.key === 'Escape') closeLb();
+    // 灯箱打开时，Tab 循环在灯箱内
+    if (e.key === 'Tab' && document.getElementById('lb').classList.contains('on')) {
+      var focusables = document.getElementById('lb').querySelectorAll('button, [tabindex]:not([tabindex="-1"])');
+      if (!focusables.length) return;
+      var first = focusables[0], last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  });
+
+  // ------------------------------------------------------------ 键盘激活
+  // 对带 role="button" + tabindex 的可聚焦元素（如可点击的缩略图），
+  // 让 Enter / Space 触发与点击相同的动作 —— 保证键盘用户能操作灯箱。
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var t = e.target;
+    if (!t || t.tagName === 'BUTTON' || t.tagName === 'A') return;
+    if (t.getAttribute('role') === 'button' && t.hasAttribute('tabindex')) {
+      e.preventDefault();
+      t.click();
     }
   });
 
