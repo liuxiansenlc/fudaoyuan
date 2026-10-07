@@ -51,12 +51,25 @@
       <div class="mt12">
         {% set rows_k = rows | selectattr('kind', 'equalto', kind) | list %}
         {% if rows_k %}
+        <div class="flex wrap mb6" style="gap:8px">
+          <label class="flex small mut" style="gap:6px;cursor:pointer">
+            <input type="checkbox" onchange="refPickAll(this)"> 全选
+          </label>
+          <div class="sp"></div>
+          <span class="mut small">共 {{ rows_k | length }} 份</span>
+          <button class="btn xs danger" onclick="refBatchDelete(this)">
+            批量删除选中 <span class="refn">0</span>
+          </button>
+        </div>
         <div class="tbwrap">
         <table class="tb">
-          <thead><tr><th>已上传文件</th><th class="num" style="width:88px">大小</th><th style="width:70px"></th></tr></thead>
+          <thead><tr><th style="width:34px"></th><th>已上传文件</th>
+            <th class="num" style="width:88px">大小</th><th style="width:70px"></th></tr></thead>
           <tbody>
           {% for r in rows_k %}
             <tr>
+              <td><input type="checkbox" class="refpick" value="{{ r.id }}"
+                         onchange="refSyncCount()" aria-label="选择 {{ r.name }}"></td>
               <td>
                 <div class="small">{{ r.name }}</div>
                 {% if r.note %}<div class="mut small" style="color:var(--accent)">{{ r.note }}</div>{% endif %}
@@ -84,10 +97,10 @@
   <div class="card-b">
     <div id="metaBox" class="small">
       <div class="note {{ 'bad' if meta.competition_note else 'ok' }}">
-        A 类竞赛表：{{ meta.competition_note or ('已加载 ' ~ meta.competition_n ~ ' 条') }}
+        A 类竞赛表：{{ meta.competition_note or ('已加载 ' ~ meta.competition_n ~ ' 条' ~ ('（合并 ' ~ meta.competition_files ~ ' 份表）' if meta.competition_files and meta.competition_files > 1 else '')) }}
       </div>
       <div class="note {{ 'bad' if meta.ranking_note else 'ok' }} mt6">
-        成绩排名表：{{ meta.ranking_note or ('已加载 ' ~ meta.ranking_n ~ ' 条学号记录') }}
+        成绩排名表：{{ meta.ranking_note or ('已加载 ' ~ meta.ranking_n ~ ' 条学号记录' ~ ('（合并 ' ~ meta.ranking_files ~ ' 份表）' if meta.ranking_files and meta.ranking_files > 1 else '')) }}
       </div>
     </div>
   </div>
@@ -120,10 +133,13 @@ function up(kind, files) {
   upWithAi('/api/refdata/' + kind, files, ai, function (x) {
     p.querySelector('i').style.width = (x * 100).toFixed(0) + '%';
   }).then(function (j) {
-    if (!j.ok) { wbToast(j.error || '上传失败', 'bad'); p.classList.add('hide'); return; }
+    if (!j.ok) { wbToast(j.error || '上传失败', 'bad', 8000); p.classList.add('hide'); return; }
     p.querySelector('i').style.width = '100%';
     if (j.ai && j.classified) {
       wbToast('AI 已识别 ' + j.n + ' 个文件：' + j.classified.join('、'), 'ok', 6000);
+      if (j.errors && j.errors.length) {
+        wbToast('有 ' + j.errors.length + ' 个没成功：' + j.errors.join('；'), 'warn', 9000);
+      }
     } else {
       wbToast('已上传 ' + j.saved.length + ' 个文件', 'ok');
     }
@@ -161,17 +177,49 @@ function delRef(id, name) {
   });
 }
 
+/* ---------------- 批量删除 ---------------- */
+function refSelected() {
+  return Array.prototype.slice.call(document.querySelectorAll('.refpick:checked'))
+    .map(function (x) { return x.value; });
+}
+function refSyncCount() {
+  var n = refSelected().length;
+  document.querySelectorAll('.refn').forEach(function (el) { el.textContent = n; });
+}
+function refPickAll(box) {
+  var table = box.closest('div').parentNode.querySelectorAll('.refpick');
+  var on = box.checked;
+  Array.prototype.forEach.call(table, function (c) { c.checked = on; });
+  refSyncCount();
+}
+function refBatchDelete(btn) {
+  var ids = refSelected();
+  if (!ids.length) { wbToast('请先勾选要删除的文件', 'warn'); return; }
+  if (!confirm('确定删除选中的 ' + ids.length + ' 份参考材料？该操作不可撤销。')) return;
+  wbBtnLoading(btn, true);
+  wbApi('/api/refdata/delete_batch', { method: 'POST', body: { ids: ids } }).then(function (j) {
+    wbBtnLoading(btn, false);
+    if (!j.ok) { wbToast(j.error || '删除失败', 'bad'); return; }
+    wbToast('已删除 ' + j.deleted + ' 份' + (j.missed && j.missed.length ? '，' + j.missed.length + ' 份未找到' : ''), 'ok');
+    setTimeout(function () { location.reload(); }, 600);
+  });
+}
+
 function reloadMeta() {
   wbApi('/api/refdata/preview').then(function (j) {
     if (!j.ok) { wbToast(j.error, 'bad'); return; }
     var m = j.meta;
+    function cnt(n, files, unit) {
+      return '已加载 ' + n + ' ' + unit + ((files && files > 1) ? '（合并 ' + files + ' 份表）' : '');
+    }
     document.getElementById('metaBox').innerHTML =
       '<div class="note ' + (m.competition_note ? 'bad' : 'ok') + '">A 类竞赛表：' +
-      (m.competition_note || ('已加载 ' + m.competition_n + ' 条')) + '</div>' +
+      (m.competition_note || cnt(m.competition_n, m.competition_files, '条')) + '</div>' +
       '<div class="note ' + (m.ranking_note ? 'bad' : 'ok') + ' mt6">成绩排名表：' +
-      (m.ranking_note || ('已加载 ' + m.ranking_n + ' 条学号记录')) + '</div>';
+      (m.ranking_note || cnt(m.ranking_n, m.ranking_files, '条学号记录')) + '</div>';
     wbToast('已重新读取', 'ok');
   });
 }
+refSyncCount();
 </script>
 {% endblock %}

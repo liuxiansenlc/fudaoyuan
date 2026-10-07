@@ -50,49 +50,64 @@ RANK_HEADER_ROW = ['学号', '姓名', '班级', '专业', '平均绩点', '平�
 
 
 # ------------------------------------------------------------------ 读取原始表格为文本
-def read_tabular_text(path, max_rows=400, max_cells=40):
+def read_tabular_text(path, max_rows=1200, max_cells=40):
     """
     把 xls / xlsx / csv 读成一段「表格文本」，喂给大模型理解。
 
     不引入 pandas：xlsx/csv 用 openpyxl / csv，xls 用 xlrd。
+    ★ **遍历所有工作表**：成绩表常按班级/专业分 sheet，只读第一个会漏掉其余班级
+      （和引擎侧 load_ranking 是同一个坑）。多 sheet 时插入 '### 工作表：xxx' 分隔。
     输出用 TSV 形式（制表符分隔），截断超长单元格，控制 token 成本。
     """
     ext = os.path.splitext(path)[1].lower()
-    rows = []
+    blocks = []                      # [(sheet_label, [[cells]])]
     try:
         if ext in ('.xlsx', '.xlsm'):
             wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-            ws = wb[wb.sheetnames[0]]
-            for i, r in enumerate(ws.iter_rows(values_only=True)):
-                if i >= max_rows:
-                    break
-                rows.append([_cell(c) for c in r[:max_cells]])
-            wb.close()
+            try:
+                for ws in wb.worksheets:
+                    rows = []
+                    for i, r in enumerate(ws.iter_rows(values_only=True)):
+                        if i >= max_rows:
+                            break
+                        rows.append([_cell(c) for c in r[:max_cells]])
+                    blocks.append((ws.title, rows))
+            finally:
+                wb.close()
         elif ext == '.xls':
             import xlrd
             book = xlrd.open_workbook(path)
-            sh = book.sheet_by_index(0)
-            for i in range(min(sh.nrows, max_rows)):
-                rows.append([_cell(sh.cell_value(i, j)) for j in range(min(sh.ncols, max_cells))])
+            for sh in book.sheets():
+                rows = []
+                for i in range(min(sh.nrows, max_rows)):
+                    rows.append([_cell(sh.cell_value(i, j)) for j in range(min(sh.ncols, max_cells))])
+                blocks.append((sh.name, rows))
         elif ext == '.csv':
+            rows = []
             with open(path, 'r', encoding='utf-8-sig', errors='replace', newline='') as f:
                 rd = csv.reader(f)
                 for i, r in enumerate(rd):
                     if i >= max_rows:
                         break
                     rows.append([_cell(c) for c in r[:max_cells]])
+            blocks.append(('', rows))
         else:
             raise ValueError('不支持的参考材料格式：%s' % ext)
     except Exception as e:
         raise ValueError('读取表格失败：%s' % e)
 
-    # 去掉全空行
-    rows = [r for r in rows if any((c or '').strip() for c in r)]
-    if not rows:
+    multi = len(blocks) > 1
+    parts = []
+    for label, rows in blocks:
+        rows = [r for r in rows if any((c or '').strip() for c in r)]   # 去掉全空行
+        if not rows:
+            continue
+        if multi:
+            parts.append('### 工作表：%s' % (label or 'Sheet'))
+        parts.extend('\t'.join(r) for r in rows)
+    if not parts:
         raise ValueError('表格里没有可读取的内容')
-    lines = ['\t'.join(r) for r in rows]
-    # 控制总长度，避免超长表格撑爆上下文
-    text = '\n'.join(lines)
+    text = '\n'.join(parts)
     if len(text) > 60000:
         text = text[:60000] + '\n…（内容过长已截断）'
     return text

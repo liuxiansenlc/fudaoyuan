@@ -249,8 +249,11 @@ def effective_overrides(pid):
 # ------------------------------------------------------------------ 参考材料
 def refdata_of(pid, kind=None):
     """
-    取参考材料。项目自带的优先；项目没有的，回退到全局（program_id 为空）的，
-    这样"全校通用的 A 类竞赛表"只传一次，各奖学金都能用。
+    取参考材料（每类**一份**，用于"当前生效的是哪份"这类单值展示）。
+    项目自带的优先；项目没有的，回退到全局（program_id 为空）的。
+
+    ⚠ 读取判定数据请用 refdata_list()：上传多份成绩表时这份只返回最后一份，
+       会让系统只认出一个班（踩过：上传 3 个年级成绩表只认出 36 个学号）。
     """
     out = {}
     for k in (['competition', 'ranking'] if not kind else [kind]):
@@ -264,6 +267,22 @@ def refdata_of(pid, kind=None):
         if row:
             out[k] = row
     return out
+
+
+def refdata_list(pid, kind):
+    """
+    取某类参考材料的**全部文件**（按上传顺序）。项目自带的优先；
+    项目一份都没有时才回退到全局（program_id 为空）。
+
+    ★ 必须返回全部：成绩排名表常常是"一个班/一个年级一个文件"，
+    只取一份会漏掉其余学生 —— 这是"上传了 2022-2024 全部班级却只认出 36 个学号"的根因。
+    """
+    rows = []
+    if pid:
+        rows = db.q('SELECT * FROM refdata WHERE program_id=? AND kind=? ORDER BY id', (pid, kind))
+    if not rows:
+        rows = db.q('SELECT * FROM refdata WHERE program_id IS NULL AND kind=? ORDER BY id', (kind,))
+    return rows or []
 
 
 def upload_refdata(pid, kind, name, stored_path, size, user_id=None, note=''):

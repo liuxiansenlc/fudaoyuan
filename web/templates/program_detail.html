@@ -141,7 +141,8 @@
       <div class="card-h"><h2>核对参考材料</h2></div>
       <div class="card-b">
         <p class="lead">
-          本项目专用的 A 类竞赛表 / 成绩排名表。**没配的会自动沿用全校通用的那份**，
+          本项目专用的 A 类竞赛表 / 成绩排名表。可上传<b>多份</b>（多个班级 / 多个年级各一份），
+          系统会<b>合并</b>后一起用于核对。本项目没配的会自动沿用全校通用那几份，
           所以全校共用的表只需在一处上传。
         </p>
 
@@ -169,11 +170,23 @@
           </div>
           {% set own = ref_rows | selectattr('kind', 'equalto', kind) | list %}
           {% if own %}
+          <div class="flex wrap mt6 mb6" style="gap:8px">
+            <label class="flex small mut" style="gap:6px;cursor:pointer">
+              <input type="checkbox" onchange="pdRefPickAll(this)"> 全选
+            </label>
+            <div class="sp"></div>
+            <span class="mut small">共 {{ own | length }} 份</span>
+            <button class="btn xs danger" onclick="pdRefBatchDelete(this)">
+              批量删除选中 <span class="pdrefn">0</span>
+            </button>
+          </div>
           <div class="tbwrap">
-          <table class="tb mt6">
+          <table class="tb">
             <tbody>
             {% for r in own %}
               <tr>
+                <td style="width:34px"><input type="checkbox" class="pdrefpick" value="{{ r.id }}"
+                    onchange="pdRefSyncCount()" aria-label="选择 {{ r.name }}"></td>
                 <td>
                   <div class="small">{{ r.name }}</div>
                   {% if r.note %}<div class="mut small" style="color:var(--accent)">{{ r.note }}</div>{% endif %}
@@ -410,15 +423,47 @@ function upRef(kind, files) {
   if (!files || !files.length) return;
   var ai = document.getElementById('aiToggle').checked;
   upRefWithAi('/api/programs/' + PID + '/refdata/' + kind, files, ai).then(function (j) {
-    if (!j.ok) { wbToast(j.error, 'bad'); return; }
+    if (!j.ok) { wbToast(j.error, 'bad', 8000); return; }
     if (j.ai && j.classified) {
       wbToast('AI 已识别 ' + j.n + ' 个文件：' + j.classified.join('、'), 'ok', 6000);
+      if (j.errors && j.errors.length) {
+        wbToast('有 ' + j.errors.length + ' 个没成功：' + j.errors.join('；'), 'warn', 9000);
+      }
     } else {
       wbToast('已上传 ' + j.saved.length + ' 个文件', 'ok');
     }
     setTimeout(function () { location.reload(); }, 900);
   });
 }
+
+/* ---------------- 参考材料批量删除 ---------------- */
+function pdRefSelected() {
+  return Array.prototype.slice.call(document.querySelectorAll('.pdrefpick:checked'))
+    .map(function (x) { return x.value; });
+}
+function pdRefSyncCount() {
+  var n = pdRefSelected().length;
+  document.querySelectorAll('.pdrefn').forEach(function (el) { el.textContent = n; });
+}
+function pdRefPickAll(box) {
+  var scoped = box.closest('div').parentNode.querySelectorAll('.pdrefpick');
+  var on = box.checked;
+  Array.prototype.forEach.call(scoped, function (c) { c.checked = on; });
+  pdRefSyncCount();
+}
+function pdRefBatchDelete(btn) {
+  var ids = pdRefSelected();
+  if (!ids.length) { wbToast('请先勾选要删除的文件', 'warn'); return; }
+  if (!confirm('确定删除选中的 ' + ids.length + ' 份参考材料？该操作不可撤销。')) return;
+  wbBtnLoading(btn, true);
+  wbApi('/api/refdata/delete_batch', { method: 'POST', body: { ids: ids } }).then(function (j) {
+    wbBtnLoading(btn, false);
+    if (!j.ok) { wbToast(j.error || '删除失败', 'bad'); return; }
+    wbToast('已删除 ' + j.deleted + ' 份', 'ok');
+    setTimeout(function () { location.reload(); }, 600);
+  });
+}
+pdRefSyncCount();
 function upRefWithAi(url, files, ai, onProgress) {
   return new Promise(function (resolve) {
     var fd = new FormData();

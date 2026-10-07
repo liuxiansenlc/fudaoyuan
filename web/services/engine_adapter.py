@@ -129,21 +129,33 @@ def rules_snapshot(program=None):
 def load_reference(cfg=None, program=None):
     """
     加载 A 类竞赛表 + 成绩排名表。
-    优先级：**该奖学金项目上传的** → 全局上传的（全校通用表）→ config.py 写死的路径。
-    这样"全校 A 类竞赛表"只传一次各奖学金都能用，个别奖学金也可以用自己的口径表。
+
+    ★ 每类都**加载全部上传文件并合并**（多班级/多学年的成绩表是常态）。
+    优先级：该奖学金项目上传的 → 全局上传的（全校通用表）→ config.py 写死的路径。
     """
     from . import programs as PG
     _, reference, _, _, _ = _mods()
     cfg = cfg or build_cfg(program)
     pid = program.get('id') if isinstance(program, dict) else program
-    ref = PG.refdata_of(pid)
-    comp_path = (ref.get('competition') or {}).get('stored_path') or cfg.competition_file
-    rank_path = (ref.get('ranking') or {}).get('stored_path') or cfg.ranking_root
+
+    comp_rows = PG.refdata_list(pid, 'competition')
+    rank_rows = PG.refdata_list(pid, 'ranking')
+    comp_files = [r['stored_path'] for r in comp_rows if r.get('stored_path')]
+    rank_files = [r['stored_path'] for r in rank_rows if r.get('stored_path')]
+    # 没上传任何文件时，退回配置里写死的路径（本地开发/单机模式可用）
+    if not comp_files and cfg.competition_file:
+        comp_files = [cfg.competition_file]
+    if not rank_files and cfg.ranking_root:
+        rank_files = [cfg.ranking_root]
+
+    def _present(paths):
+        return [p for p in paths if p and os.path.exists(p)]
 
     comp_items, comp_note = [], ''
-    if comp_path and os.path.exists(comp_path):
+    comp_ok = _present(comp_files)
+    if comp_ok:
         try:
-            comp_items = reference.load_competitions(comp_path, cfg=cfg)['items']
+            comp_items = reference.load_competitions(comp_ok, cfg=cfg)['items']
         except Exception as e:
             comp_note = 'A类竞赛表读取失败：%s' % e
     else:
@@ -151,32 +163,48 @@ def load_reference(cfg=None, program=None):
 
     ranking = {'by_sid': {}, 'by_name': {}, 'files': 0}
     rank_note = ''
-    if rank_path and os.path.exists(rank_path):
+    rank_ok = _present(rank_files)
+    if rank_ok:
         try:
-            ranking = reference.load_ranking(rank_path, cfg=cfg)
+            ranking = reference.load_ranking(rank_ok, cfg=cfg)
+            if not ranking.get('by_sid'):
+                # 有文件却一条学号都没读到：多半是格式不标准（列名不同、多级表头）
+                rank_note = ('成绩表读取到 0 条学号（共 %d 份）—— 列名可能不是标准格式，'
+                             '建议开启「AI 智能识别」重新上传' % len(rank_ok))
         except Exception as e:
             rank_note = '成绩排名表读取失败：%s' % e
     else:
         rank_note = '未提供成绩排名表'
 
-    def _src(kind, row):
-        """标注这份参考材料是本项目专用，还是沿用了全校通用的。"""
-        if not row:
+    def _src(rows):
+        """标注这些参考材料是本项目专用，还是沿用了全校通用的。"""
+        if not rows:
             return ''
-        return '本项目专用' if row.get('program_id') else '全校通用'
+        return '本项目专用' if all(r.get('program_id') for r in rows) else '全校通用'
+
+    def _names(paths, rows):
+        if rows:
+            n = [r['name'] for r in rows]
+        else:
+            n = [os.path.basename(p) for p in paths if p]
+        if not n:
+            return ''
+        return n[0] if len(n) == 1 else '%s 等 %d 份' % (n[0], len(n))
 
     return {
         'comp_items': comp_items,
         'ranking': ranking,
         'meta': {
-            'competition_file': os.path.basename(comp_path) if comp_path else '',
-            'ranking_dir': os.path.basename(rank_path.rstrip('/\\')) if rank_path else '',
+            'competition_file': _names(comp_files, comp_rows),
+            'ranking_dir': _names(rank_files, rank_rows),
             'competition_n': len(comp_items),
             'ranking_n': len(ranking.get('by_sid') or {}),
             'competition_note': comp_note,
             'ranking_note': rank_note,
-            'competition_src': _src('competition', ref.get('competition')),
-            'ranking_src': _src('ranking', ref.get('ranking')),
+            'competition_src': _src(comp_rows),
+            'ranking_src': _src(rank_rows),
+            'competition_files': len(comp_rows) or len(comp_files),
+            'ranking_files': len(rank_rows) or len(rank_files),
         },
     }
 

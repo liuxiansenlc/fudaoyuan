@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """奖学金项目管理：创建 / 编辑 / 归档 / 删除，以及板块方案、规则覆盖、参考材料、模板。"""
 import os
+import uuid
 
 from flask import (Blueprint, render_template, request, jsonify, redirect,
                    url_for, flash, abort)
@@ -244,48 +245,53 @@ def api_refdata(pid, kind):
     use_ai = request.form.get('ai') in ('1', 'true', 'on', 'yes')
     dest_dir = os.path.join(WebConfig.UPLOAD_DIR, 'refdata', str(pid), kind)
     os.makedirs(dest_dir, exist_ok=True)
-    saved, classified = [], []
+    saved, classified, errors = [], [], []
     if use_ai:
         from ..services import refdata_ai as RAI
         from ..services import vision_client as VC
         model_row = VC.active_model()
+        if not model_row:
+            return jsonify(ok=False, error='AI 识别需要先配置模型：请到「模型设置」填好 '
+                                           'base_url / api_key / 模型名并启用，再试一次'), 400
         for f in fs:
             original = safe_name(f.filename)
             ext = os.path.splitext(original)[1].lower()
             if ext not in WebConfig.ALLOWED_REF:
-                return jsonify(ok=False, error='AI 识别只接受 .xls/.xlsx/.csv：%s' % original), 400
-            tmp = os.path.join(dest_dir, '_ai_raw_' + original)
+                errors.append('%s：只接受 .xls/.xlsx/.csv' % original)
+                continue
+            tmp = os.path.join(dest_dir, '_ai_raw_' + uuid.uuid4().hex[:8] + '_' + original)
             f.save(tmp)
-            base_name = 'ai_' + os.path.splitext(original)[0] + '.xlsx'
+            base_name = 'ai_%s_%s.xlsx' % (uuid.uuid4().hex[:8],
+                                           os.path.splitext(original)[0])
             try:
                 out_kind, stored, n, note = RAI.recognize_and_store(
                     tmp, kind, model_row, dest_dir, base_name)
             except Exception as e:
+                # 单个文件失败不拖垮整批，记下来继续
+                errors.append('%s：%s' % (original, e))
+                continue
+            finally:
                 try:
                     if os.path.exists(tmp):
                         os.remove(tmp)
                 except Exception:
                     pass
-                return jsonify(ok=False, error='AI 识别失败：%s（%s）' % (original, e)), 400
-            try:
-                if os.path.exists(tmp):
-                    os.remove(tmp)
-            except Exception:
-                pass
             PG.upload_refdata(pid, out_kind, original, stored,
                               os.path.getsize(stored), u['id'], note=note)
             saved.append(original)
             classified.append('%s→%s(%d条)' % (original, out_kind, n))
         db.audit(u['id'], 'refdata.ai_upload', str(pid),
-                 '；'.join(classified) if classified else ','.join(saved))
-        return jsonify(ok=True, saved=saved, ai=True,
+                 '；'.join(classified) if classified else '；'.join(errors))
+        if not saved:
+            return jsonify(ok=False, ai=True, error='AI 识别失败：' + '；'.join(errors[:3])), 400
+        return jsonify(ok=True, saved=saved, ai=True, errors=errors,
                        classified=classified, n=len(saved))
     for f in fs:
         original = safe_name(f.filename)
         ext = os.path.splitext(original)[1].lower()
         if ext not in WebConfig.ALLOWED_REF:
             return jsonify(ok=False, error='只接受 .xls/.xlsx/.csv：%s' % original), 400
-        dest = os.path.join(dest_dir, original)
+        dest = os.path.join(dest_dir, '%s_%s' % (uuid.uuid4().hex[:8], original))
         f.save(dest)
         PG.upload_refdata(pid, kind, original, dest, os.path.getsize(dest), u['id'])
         saved.append(original)

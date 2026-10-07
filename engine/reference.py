@@ -45,61 +45,105 @@ def _norm_sid(v):
     return s
 
 
+def _iter_sheets(path):
+    """
+    统一读取 .xlsx / .xls，**遍历全部工作表**，逐表产出 (表名, [[单元格...]行])。
+
+    为什么必须遍历所有 sheet：成绩排名表常见"一个班一个 sheet"或"不同专业分表"，
+    只读第一个 sheet 会漏掉其余班级（踩过：上传 3 个年级的成绩表只认出 36 个学号）。
+    """
+    ext = os.path.splitext(path or '')[1].lower()
+    if ext in ('.xlsx', '.xlsm'):
+        import openpyxl
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        try:
+            for ws in wb.worksheets:
+                yield ws.title, [list(r) for r in ws.iter_rows(values_only=True)]
+        finally:
+            wb.close()
+    else:
+        import xlrd
+        book = xlrd.open_workbook(path)
+        for sh in book.sheets():
+            yield sh.name, [sh.row_values(i) for i in range(sh.nrows)]
+
+
+def _expand_files(root):
+    """
+    把"一个路径"归一成"待读文件列表"，兼容三种传法：
+      1. 列表/元组 —— Web 上多个文件各存一条 refdata，这里全部读（**关键**：
+         以前只取最后一份，导致上传 N 个班级的成绩表只认出 1 个班）；
+      2. 单个文件路径；
+      3. 目录 —— 递归找 .xlsx / .xls / .csv。
+    """
+    if isinstance(root, (list, tuple, set)):
+        out = []
+        for p in root:
+            if p and os.path.isfile(p):
+                out.append(p)
+        return out
+    if root and os.path.isfile(root):
+        return [root]
+    pats = ('*.xlsx', '*.xls', '*.csv')
+    out = []
+    for pat in pats:
+        out.extend(glob.glob(os.path.join(root or '', '**', pat), recursive=True))
+    return sorted(set(out))
+
+
 def load_ranking(root=None, verbose=False, cfg=None):
-    root = root or RANKING_ROOT or (cfg or DEFAULT).ranking_root
     """
     返回 {'by_sid': {学号: rec}, 'by_name': {(班级,姓名): rec}, 'files': n}
-    root 可以是目录（递归找 *.xlsx），也可以是单个 xlsx 文件路径。
-    Web 上传的成绩表存的是单文件路径，这里要兼容两种情况，否则
-    传单个文件时 glob 找不到（踩过：上传后"成绩表 0 条学号"）。
+
+    root 可以是：文件路径列表 / 单个文件 / 目录。
+    ★ 支持多文件合并（多班级、多学年各一个文件是常态），且每个文件**所有 sheet** 都读。
     """
-    import openpyxl
-    if root and os.path.isfile(root):
-        files = [root]
-    else:
-        files = glob.glob(os.path.join(root or '', '**', '*.xlsx'), recursive=True)
+    root = root or RANKING_ROOT or (cfg or DEFAULT).ranking_root
+    files = _expand_files(root)
     by_sid = {}
     by_name = {}
     dup_sid = []
-    for f in sorted(files):
+    for f in files:
         try:
-            wb = openpyxl.load_workbook(f, read_only=True, data_only=True)
+            sheets = list(_iter_sheets(f))
         except Exception:
             continue
-        ws = wb[wb.sheetnames[0]]
-        rows = list(ws.iter_rows(values_only=True))
-        wb.close()
-        if not rows:
-            continue
-        # 找表头行：包含"学号"和"姓名"的那一行
-        hdr_i = None
-        for i, r in enumerate(rows[:6]):
-            vals = [_norm(c) for c in r]
-            if '学号' in vals and '姓名' in vals:
-                hdr_i = i
-                break
-        if hdr_i is None:
-            continue
-        header = [_norm(c) for c in rows[hdr_i]]
-        idx = {}
-        for j, h in enumerate(header):
-            if h in RANK_COLS:
-                idx[RANK_COLS[h]] = j
-        if 'sid' not in idx or 'name' not in idx:
-            continue
-        for r in rows[hdr_i + 1:]:
-            sid = _norm_sid(r[idx['sid']]) if idx['sid'] < len(r) else ''
-            if not sid or not re.fullmatch(r'\d{8,14}', sid):
+        for sheet_name, rows in sheets:
+            if not rows:
                 continue
-            rec = {'source_file': os.path.basename(f)}
-            for k, j in idx.items():
-                if j < len(r):
-                    rec[k] = _norm(r[j])
-            if sid in by_sid and by_sid[sid] != rec:
-                dup_sid.append(sid)
-            by_sid[sid] = rec
-            key = (rec.get('class_no', ''), rec.get('name', ''))
-            by_name[key] = rec
+            rows = [list(r) for r in rows]
+            # 找表头行：包含"学号"和"姓名"的那一行（前 8 行内找，容忍标题/说明行）
+            hdr_i = None
+            for i, r in enumerate(rows[:8]):
+                vals = [_norm(c) for c in r]
+                if '学号' in vals and '姓名' in vals:
+                    hdr_i = i
+                    break
+            if hdr_i is None:
+                continue
+            header = [_norm(c) for c in rows[hdr_i]]
+            idx = {}
+            for j, h in enumerate(header):
+                if h in RANK_COLS:
+                    idx[RANK_COLS[h]] = j
+            if 'sid' not in idx or 'name' not in idx:
+                continue
+            for r in rows[hdr_i + 1:]:
+                sid = _norm_sid(r[idx['sid']]) if idx['sid'] < len(r) else ''
+                if not sid or not re.fullmatch(r'\d{8,14}', sid):
+                    continue
+                rec = {'source_file': os.path.basename(f)}
+                if len(sheets) > 1:
+                    rec['source_sheet'] = sheet_name
+                for k, j in idx.items():
+                    if j < len(r):
+                        rec[k] = _norm(r[j])
+                if sid in by_sid and by_sid[sid] != rec:
+                    dup_sid.append(sid)
+                # 后读到的覆盖先读到的：多份表里同一学号以最后一份为准（通常是更完整的）
+                by_sid[sid] = rec
+                key = (rec.get('class_no', ''), rec.get('name', ''))
+                by_name[key] = rec
     if verbose and dup_sid:
         print('  注意：学号重复出现 %d 个：%s' % (len(set(dup_sid)), sorted(set(dup_sid))[:5]))
     return {'by_sid': by_sid, 'by_name': by_name, 'files': len(files)}
@@ -114,58 +158,55 @@ def _clean_comp_name(s):
 
 
 def load_competitions(path=None, cfg=None):
-    path = path or COMPETITION_XLS or (cfg or DEFAULT).competition_file
     """
     返回 {'items': [{name, name_clean, level, category, raw}], 'names': [...]}
     level: 国家级/省级；category: A+/A/A-
 
-    同时支持 .xls（xlrd）与 .xlsx/.xlsm（openpyxl）。之前只用 xlrd，
-    上传 .xlsx 竞赛表会直接报「Excel xlsx file; not supported」——
-    辅导员传的表不一定是 .xls，这里按扩展名分派，读法更稳。
+    path 可以是：文件路径列表 / 单个文件 / 目录。
+    ★ 多份表会**合并去重**（例如学院又补发了一份名单，两个文件都要算）。
+    同时支持 .xls（xlrd）与 .xlsx/.xlsm（openpyxl），且遍历所有 sheet——
+    之前只用 xlrd 读第一个表，上传 .xlsx 会报「not supported」。
     """
-    ext = os.path.splitext(path or '')[1].lower()
-    sheets = []            # [(sheet_name, [[cell,...] per row])]
-    if ext in ('.xlsx', '.xlsm'):
-        import openpyxl
-        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-        for ws in wb.worksheets:
-            sheets.append((ws.title, [list(r) for r in ws.iter_rows(values_only=True)]))
-        wb.close()
-    else:
-        import xlrd
-        book = xlrd.open_workbook(path)
-        for sh in book.sheets():
-            sheets.append((sh.name, [sh.row_values(i) for i in range(sh.nrows)]))
+    path = path or COMPETITION_XLS or (cfg or DEFAULT).competition_file
+    files = _expand_files(path)
 
     items = []
-    for sheet_name, raw_rows in sheets:
-        rows = [[_norm(c) for c in r] for r in raw_rows]
-        if not rows:
+    for f in files:
+        try:
+            sheets = list(_iter_sheets(f))
+        except Exception:
             continue
-        hdr_i = None
-        for i, r in enumerate(rows[:6]):
-            if '竞赛名称' in r:
-                hdr_i = i
-                break
-        if hdr_i is None:
-            continue
-        header = rows[hdr_i]
-        def col(name):
-            return header.index(name) if name in header else None
-        c_name, c_level, c_cat = col('竞赛名称'), col('级别'), col('竞赛类别')
-        if c_name is None:
-            continue
-        for r in rows[hdr_i + 1:]:
-            nm = r[c_name] if c_name < len(r) else ''
-            if not nm or len(nm) < 3:
+        for sheet_name, raw_rows in sheets:
+            rows = [[_norm(c) for c in r] for r in raw_rows]
+            if not rows:
                 continue
-            items.append({
-                'name': nm,
-                'name_clean': _clean_comp_name(nm),
-                'level': (r[c_level] if c_level is not None and c_level < len(r) else ''),
-                'category': (r[c_cat] if c_cat is not None and c_cat < len(r) else ''),
-                'sheet': sheet_name,
-            })
+            hdr_i = None
+            for i, r in enumerate(rows[:8]):
+                if '竞赛名称' in r:
+                    hdr_i = i
+                    break
+            if hdr_i is None:
+                continue
+            header = rows[hdr_i]
+
+            def col(name):
+                return header.index(name) if name in header else None
+
+            c_name, c_level, c_cat = col('竞赛名称'), col('级别'), col('竞赛类别')
+            if c_name is None:
+                continue
+            for r in rows[hdr_i + 1:]:
+                nm = r[c_name] if c_name < len(r) else ''
+                if not nm or len(nm) < 3:
+                    continue
+                items.append({
+                    'name': nm,
+                    'name_clean': _clean_comp_name(nm),
+                    'level': (r[c_level] if c_level is not None and c_level < len(r) else ''),
+                    'category': (r[c_cat] if c_cat is not None and c_cat < len(r) else ''),
+                    'sheet': sheet_name,
+                    'source_file': os.path.basename(f),
+                })
     # 去重
     seen = set()
     uniq = []

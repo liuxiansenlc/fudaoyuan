@@ -2,6 +2,7 @@
 """规则配置 / 参考数据 / 模型设置 / 系统信息。"""
 import os
 import json
+import uuid
 
 from flask import (Blueprint, render_template, request, jsonify, flash,
                    redirect, url_for)
@@ -115,35 +116,39 @@ def api_refdata_upload(kind):
     if not fs:
         return jsonify(ok=False, error='没有收到文件'), 400
     use_ai = request.form.get('ai') in ('1', 'true', 'on', 'yes')
-    saved, classified = [], []
+    saved, classified, errors = [], [], []
     if use_ai:
         from ..services import refdata_ai as RAI
         model_row = VC.active_model()
+        if not model_row:
+            return jsonify(ok=False, error='AI 识别需要先配置模型：请到「模型设置」填好 '
+                                           'base_url / api_key / 模型名并启用，再试一次'), 400
         for f in fs:
             original = safe_name(f.filename)
             ext = os.path.splitext(original)[1].lower()
             if ext not in WebConfig.ALLOW_REF:
-                return jsonify(ok=False, error='AI 识别只接受 .xls/.xlsx/.csv：%s' % original), 400
+                errors.append('%s：只接受 .xls/.xlsx/.csv' % original)
+                continue
             dest_dir = os.path.join(WebConfig.UPLOAD_DIR, 'refdata', kind)
             os.makedirs(dest_dir, exist_ok=True)
-            tmp = os.path.join(dest_dir, '_ai_raw_' + original)
+            tmp = os.path.join(dest_dir, '_ai_raw_' + uuid.uuid4().hex[:8] + '_' + original)
             f.save(tmp)
-            base_name = 'ai_' + os.path.splitext(original)[0] + '.xlsx'
+            # 落盘名加唯一前缀：不同班级的同名文件（如都叫「成绩表.xlsx」）不会互相覆盖
+            base_name = 'ai_%s_%s.xlsx' % (uuid.uuid4().hex[:8],
+                                           os.path.splitext(original)[0])
             try:
                 out_kind, stored, n, note = RAI.recognize_and_store(
                     tmp, kind, model_row, dest_dir, base_name)
             except Exception as e:
+                # 单个文件失败不拖垮整批：记下来继续处理其余文件
+                errors.append('%s：%s' % (original, e))
+                continue
+            finally:
                 try:
                     if os.path.exists(tmp):
                         os.remove(tmp)
                 except Exception:
                     pass
-                return jsonify(ok=False, error='AI 识别失败：%s（%s）' % (original, e)), 400
-            try:
-                if os.path.exists(tmp):
-                    os.remove(tmp)
-            except Exception:
-                pass
             db.ex('INSERT INTO refdata(kind,name,stored_path,size,note,uploaded_by,created_at)'
                   ' VALUES(?,?,?,?,?,?,?)',
                   (out_kind, original, stored, os.path.getsize(stored), note,
@@ -151,8 +156,10 @@ def api_refdata_upload(kind):
             saved.append(original)
             classified.append('%s→%s(%d条)' % (original, out_kind, n))
         db.audit(u['id'], 'refdata.ai_upload', kind,
-                 '；'.join(classified) if classified else ','.join(saved))
-        return jsonify(ok=True, saved=saved, ai=True,
+                 '；'.join(classified) if classified else '；'.join(errors))
+        if not saved:
+            return jsonify(ok=False, ai=True, error='AI 识别失败：' + '；'.join(errors[:3])), 400
+        return jsonify(ok=True, saved=saved, ai=True, errors=errors,
                        classified=classified, n=len(saved))
     for f in fs:
         original = safe_name(f.filename)
@@ -161,7 +168,8 @@ def api_refdata_upload(kind):
             return jsonify(ok=False, error='只接受 .xls/.xlsx/.csv：%s' % original), 400
         dest_dir = os.path.join(WebConfig.UPLOAD_DIR, 'refdata', kind)
         os.makedirs(dest_dir, exist_ok=True)
-        stored = os.path.join(dest_dir, original)
+        # 唯一前缀：避免不同班级的同名文件互相覆盖（覆盖了就会"少一个班的学号"）
+        stored = os.path.join(dest_dir, '%s_%s' % (uuid.uuid4().hex[:8], original))
         f.save(stored)
         db.ex('INSERT INTO refdata(kind,name,stored_path,size,uploaded_by,created_at)'
               ' VALUES(?,?,?,?,?,?)',
@@ -169,6 +177,25 @@ def api_refdata_upload(kind):
         saved.append(original)
     db.audit(u['id'], 'refdata.upload', kind, ','.join(saved))
     return jsonify(ok=True, saved=saved)
+
+
+@bp.route('/api/refdata/delete_batch', methods=['POST'])
+@login_required
+def api_refdata_delete_batch():
+    """批量删除参考材料。body: {ids: [refdata_id, ...]}"""
+    u = current_user()
+    d = request.get_json(silent=True) or {}
+    ids = d.get('ids')
+    if not isinstance(ids, list) or not ids:
+        return jsonify(ok=False, error='没有选中要删除的文件'), 400
+    names, missed = [], []
+    for rid in ids[:500]:
+        try:
+            row = PG.delete_refdata(int(rid), u['id'])
+            names.append(row.get('name') or str(rid))
+        except Exception:
+            missed.append(rid)
+    return jsonify(ok=True, deleted=len(names), names=names, missed=missed)
 
 
 @bp.route('/api/refdata/<int:rid>', methods=['DELETE'])
